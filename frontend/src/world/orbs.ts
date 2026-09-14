@@ -21,6 +21,22 @@ import { spiralPlacement } from './placement';
 const CORE_RING_RADIUS = 6.2;
 const CORE_RING_HEIGHT = 1.4;
 
+/**
+ * How hard a core memory glows, as a base plus the size of its slow pulse.
+ *
+ * Kept here because `update()` rewrites emissiveIntensity every frame, so the
+ * value passed to the material constructor survives exactly one frame and
+ * setting it there alone does nothing. One constant, used in both places.
+ *
+ * The `glow` palette entries are pale on purpose, so intensity above roughly 1
+ * clips several channels at once and the orb turns into a featureless white
+ * disc — losing both its emotion colour and any sense of shape. Sitting just
+ * under the bloom threshold in scene.ts means only the orb's own dominant
+ * channel spills, so a core memory glows in *its* colour instead of in white.
+ */
+const CORE_EMISSIVE_BASE = 0.8;
+const CORE_EMISSIVE_PULSE = 0.18;
+
 export interface OrbPick {
   entryId: string;
   isCore: boolean;
@@ -164,9 +180,8 @@ export class MemoryOrbs {
         // on. These are the memories most likely to be blends, so it's where
         // the effect matters most.
         emissive: new THREE.Color(second ? PALETTE[second.emotion].glow : palette.glow),
-        // Well above 1 so bloom actually catches these and they read as lit
-        // from within rather than just brightly painted.
-        emissiveIntensity: 2.4,
+        // Overwritten on the first frame of update(); see CORE_EMISSIVE_BASE.
+        emissiveIntensity: CORE_EMISSIVE_BASE,
         roughness: 0.15,
         metalness: 0.1,
       });
@@ -202,7 +217,12 @@ export class MemoryOrbs {
       mesh.rotation.x += delta * 0.08;
 
       const material = mesh.material as THREE.MeshStandardMaterial;
-      material.emissiveIntensity = 2.2 + 0.6 * Math.sin(elapsed * 0.9 + phase) + arousal;
+      // Arousal contributes far less than it used to: at full weight a loud
+      // moment on its own was enough to push these back into white-out.
+      material.emissiveIntensity =
+        CORE_EMISSIVE_BASE +
+        CORE_EMISSIVE_PULSE * Math.sin(elapsed * 0.9 + phase) +
+        arousal * 0.25;
     }
 
     this.coreGroup.rotation.y -= delta * 0.05; // counter-rotates against the galaxy

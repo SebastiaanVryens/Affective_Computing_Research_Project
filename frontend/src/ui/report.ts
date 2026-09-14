@@ -82,6 +82,15 @@ export function generateReport(
   document.body.append(host);
   document.body.classList.add('printing');
 
+  // Every browser seeds the "Save as PDF" filename from document.title, and
+  // there is no other hook for it — so the title becomes the filename for the
+  // duration of the print and is put back in cleanup. Without this the file
+  // saves as "Mindscape — an emotional diary.pdf", which is the wrong name for
+  // a document going into someone's notes, and identifies the app rather than
+  // the person on three of its pages.
+  const appTitle = document.title;
+  document.title = printFilename(name);
+
   let fallbackTimer = 0;
 
   /**
@@ -95,6 +104,7 @@ export function generateReport(
     window.removeEventListener('afterprint', cleanup);
     for (const node of document.querySelectorAll('#print-report')) node.remove();
     document.body.classList.remove('printing');
+    document.title = appTitle;
     printing = false;
   };
 
@@ -115,6 +125,38 @@ export function generateReport(
   // Let layout and fonts settle before the dialog snapshots the page; printing
   // synchronously can capture a half-laid-out document.
   window.setTimeout(() => window.print(), 120);
+}
+
+/**
+ * The filename the save dialog will suggest: "Ada_Lovelace_Diary".
+ *
+ * No extension — the browser appends ".pdf" itself, and a title ending in
+ * ".pdf" gets saved as "Name_Diary.pdf.pdf".
+ *
+ * Characters that are illegal in a filename on Windows or macOS are dropped
+ * rather than substituted, because a name is being typed by hand into a field
+ * that has never validated it, and a save dialog that silently refuses to open
+ * would look like the export failing. Spaces become underscores so the name
+ * survives being emailed, attached, or put on a shared drive intact.
+ */
+function printFilename(name: string): string {
+  const cleaned = name
+    .replace(/[\\/:*?"<>|]/g, '')
+    // Whitespace is flattened before control characters are stripped, not
+    // after: a pasted tab is both, and stripping first would delete the
+    // separator instead of turning it into one, joining two names together.
+    .replace(/\s+/g, ' ')
+    // Anything still unprintable is illegal in a filename and invisible in the
+    // field it was typed into.
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .replace(/\s+/g, '_')
+    // A leading dot hides the file on Unix; trailing dots are dropped silently
+    // by Windows, which would turn "Mr. Smith." into a name that round-trips
+    // differently from the one that was typed.
+    .replace(/^\.+|\.+$/g, '');
+
+  return cleaned ? `${cleaned}_Diary` : 'Diary';
 }
 
 // ---------------------------------------------------------------------------

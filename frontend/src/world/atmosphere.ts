@@ -38,6 +38,42 @@ import {
 const LIFETIME_SHARPENING = 1.6;
 const LIFETIME_NUCLEUS = 0.9;
 
+/**
+ * Relative luminance every sky band is pulled toward, and how hard.
+ *
+ * The palette is picked for identity, not for even brightness: joy's yellow
+ * carries about three times the luminance of sadness's blue. Painted onto the
+ * sky as-is, whichever warm emotion is present becomes a bright soft-edged blob
+ * floating in a darker field — which reads as a *sun*. A light source, in a
+ * world that is supposed to have none, and the only thing on screen out-shining
+ * the orbs.
+ *
+ * Equalising luminance keeps every emotion's hue, which is the entire point of
+ * the banded sky, and takes away only its ability to out-shine its neighbours.
+ * Hue stays information; brightness stops being accidental information.
+ *
+ * Not flattened all the way — a little residual variation keeps the sky from
+ * looking like flat vinyl — and deliberately dim, which is what keeps the sky
+ * clear of the bloom threshold in scene.ts without a separate exposure knob.
+ */
+const SKY_BAND_LUMA = 0.22;
+const SKY_LUMA_FLATTEN = 0.85;
+
+/**
+ * A palette colour rescaled to sit at roughly SKY_BAND_LUMA.
+ *
+ * THREE.Color has already converted the hex out of sRGB, so these components
+ * are linear and a plain Rec.709 luminance is the right measure.
+ */
+function skyBandColor(hex: string): THREE.Color {
+  const color = new THREE.Color(hex);
+  const luma = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+  if (luma < 1e-4) return color;
+
+  const scale = 1 + SKY_LUMA_FLATTEN * (SKY_BAND_LUMA / luma - 1);
+  return color.multiplyScalar(scale);
+}
+
 const SKY_VERTEX = /* glsl */ `
   varying vec3 vWorldPosition;
   void main() {
@@ -129,12 +165,27 @@ const SKY_FRAGMENT = /* glsl */ `
   }
 
   /**
-   * The shape of the sky: a large, soft, essentially static field.
+   * The shape of the sky: a soft, essentially static field.
+   *
+   * SKY_SCALE is the number that decides whether you are looking at a mixture
+   * or at a shape. The field is what maps screen position to a point on the
+   * emotion gradient, so how many times it cycles across the visible sky is
+   * exactly how many times each emotion gets to appear. At the original 1.35 it
+   * completed barely one cycle inside a 52° field of view, which handed every
+   * emotion one enormous contiguous region — and a single large region of one
+   * hue, soft-edged against its neighbour, stops reading as sky and starts
+   * reading as an *object* in the sky. No amount of recolouring fixes that;
+   * it is the frequency that is wrong, not the palette.
+   *
+   * Cycling several times over instead interleaves all seven bands across the
+   * whole sky, which is the point: a mood is a mixture, so the sky should be a
+   * mixture everywhere rather than a map of territories.
    *
    * Domain warping — sampling noise at coordinates displaced by other noise —
    * is what turns round blobs into the long curling forms that read as flow
-   * rather than as clouds. Two octaves is enough; more just adds fine detail
-   * that the colour gradient smooths away anyway.
+   * rather than as clouds. The warp stays at a lower frequency than the field
+   * it displaces, which is what keeps the forms stretched and organic instead
+   * of merely granular.
    *
    * The time term is deliberately almost nothing — measured at roughly 3% of the
    * field's range per 30 seconds, which is invisible moment to moment but keeps
@@ -145,25 +196,35 @@ const SKY_FRAGMENT = /* glsl */ `
    * competes with colour for attention. Holding the shape still means a shift in
    * mood reads purely as the sky changing hue in place.
    */
+  const float SKY_SCALE = 4.6;
+
   float flowField(vec3 dir, float time) {
-    vec3 p = dir * 1.35 + vec3(0.0, time * 0.001, 0.0);
+    vec3 p = dir * SKY_SCALE + vec3(0.0, time * 0.001, 0.0);
 
     vec3 warp = vec3(
-      noise(p * 0.85),
-      noise(p * 0.85 + vec3(4.7, 2.3, 9.1)),
-      noise(p * 0.85 + vec3(8.3, 5.9, 1.7))
+      noise(p * 0.5),
+      noise(p * 0.5 + vec3(4.7, 2.3, 9.1)),
+      noise(p * 0.5 + vec3(8.3, 5.9, 1.7))
     );
 
+    // Three octaves rather than two. At this frequency the extra detail is no
+    // longer smoothed away by the colour gradient — it is what stops the
+    // mixture looking like regular blobs on a grid.
     float field = noise(p + (warp - 0.5) * 2.4);
-    field = field * 0.68 + noise(p * 2.3 + (warp - 0.5) * 1.1) * 0.32;
+    field = field * 0.54
+          + noise(p * 2.1 + (warp - 0.5) * 1.1) * 0.30
+          + noise(p * 4.3 + (warp - 0.5) * 0.6) * 0.16;
 
     // Slight upward bias so the composition still has a sky-like top and
-    // bottom instead of being uniformly busy everywhere.
-    field += (dir.y * 0.5 + 0.5) * 0.22 - 0.11;
+    // bottom. Weaker than it was: with the field cycling several times over,
+    // a strong bias would pin the same band along the whole horizon.
+    field += (dir.y * 0.5 + 0.5) * 0.12 - 0.06;
 
     // Expand the usable middle of the range: raw value noise clusters hard
     // around 0.5, which would leave most of the screen showing one emotion.
-    return clamp(smoothstep(0.24, 0.76, field), 0.0, 1.0);
+    // Averaging three octaves instead of two tightens that cluster further, so
+    // the window has to narrow to match or the outer bands never get drawn.
+    return clamp(smoothstep(0.31, 0.69, field), 0.0, 1.0);
   }
 
   void main() {
@@ -195,8 +256,21 @@ const SKY_FRAGMENT = /* glsl */ `
     // equal area and the sky would go rainbow. But flat is precisely where
     // clarity is lowest, so pulling hard toward grey here catches exactly that
     // case — the sky is most colourful when it is most sure.
+    //
+    // Clarity is 1 - normalised entropy over seven emotions, and that does not
+    // spread over [0,1] in practice: a realistic mixed reading scores around
+    // 0.15, and only a near-pure single emotion passes 0.4. Reading it as a
+    // straight 0..1 fraction therefore treated the *normal* case as near-total
+    // ambiguity and left the sky grey almost all the time. Remapping the range
+    // it actually occupies is what gives an ordinary day a coloured sky while
+    // still collapsing a genuinely flat one to grey.
+    float vividness = 0.25 + 0.40 * smoothstep(0.0, 0.3, uClarity);
     float luma = dot(color, vec3(0.299, 0.587, 0.114));
-    color = mix(vec3(luma) * 0.85, color, 0.22 + 0.78 * uClarity);
+    // The grey being mixed toward is held close to the colour's own luminance.
+    // Darkening it further would couple two things that should stay separate:
+    // every step down in saturation would also be a step down in brightness,
+    // which is how a muted sky turned into a murky one last time.
+    color = mix(vec3(luma) * 0.94, color, vividness);
 
     // A very faint second field adds depth without introducing movement. Its
     // strength rides on vocal energy, so a raised voice thickens the air
@@ -260,7 +334,7 @@ export class Atmosphere {
       // MELD order: these slots must line up with the weights the mood bus
       // emits, and that ordering is what puts related emotions side by side.
       uBandColors: {
-        value: GRADIENT_ORDER.map((e) => new THREE.Color(PALETTE[e].base)),
+        value: GRADIENT_ORDER.map((e) => skyBandColor(PALETTE[e].base)),
       },
       uBandWeights: { value: this.bandWeights },
       uLifetimeWeights: { value: this.lifetimeWeights },

@@ -67,7 +67,7 @@ export class MindscapeWorld {
     // frame rate for detail nobody can see.
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 0.95;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
 
@@ -91,9 +91,14 @@ export class MindscapeWorld {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new UnrealBloomPass(
       new THREE.Vector2(container.clientWidth, container.clientHeight),
-      0.62, // strength — enough to make emissive orbs glow, short of blowing out
-      0.85, // radius
-      0.32 // threshold: only genuinely bright pixels bloom, so the sky stays flat
+      0.5, // strength — enough to make emissive orbs glow, short of blowing out
+      0.7, // radius
+      // Threshold. Bloom runs before OutputPass, so this is compared against
+      // *linear* scene values, not the tone-mapped image: at 0.32 an ordinary
+      // sky pixel cleared it and the entire backdrop glowed. The orbs carry
+      // emissiveIntensity 1.0–2.4, so sitting just under 1 keeps the glow on
+      // the things that are meant to be emitting and off everything else.
+      0.9
     );
     this.composer.addPass(this.bloom);
     // Handles the tone-mapping/colour-space conversion at the end of the chain,
@@ -181,7 +186,7 @@ export class MindscapeWorld {
 
     // Bloom swells with vocal energy. Subtle, but it's most of why a loud
     // moment reads as a loud moment.
-    this.bloom.strength += (0.62 + snapshot.arousal * 0.45 - this.bloom.strength) *
+    this.bloom.strength += (0.5 + snapshot.arousal * 0.35 - this.bloom.strength) *
       Math.min(1, delta * 3);
 
     this.composer.render();

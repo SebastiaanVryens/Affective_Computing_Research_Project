@@ -594,7 +594,8 @@ export class Modals {
       generate,
       paragraph(
         'Your browser will open its print dialog — choose "Save as PDF" as the ' +
-          'destination. Nothing is sent anywhere.',
+          'destination. The file will be named after you, like ' +
+          '"Ada_Lovelace_Diary.pdf". Nothing is sent anywhere.',
         'subtitle'
       )
     );
