@@ -10,10 +10,20 @@ dist/
 # Face-api weights, copied from node_modules by `npm run fetch-models`
 frontend/public/models/
 
-# MELD data and trained checkpoints — large, and regenerable
+# Datasets and trained checkpoints — large, and all regenerable:
+#   data/meld/      python -m training.prepare_meld
+#   data/corpora/   python -m training.prepare_corpora
+#   backend/models/ python -m training.train_text
 data/meld/
+data/corpora/
 backend/models/
 backend/checkpoints/
+
+# Evaluation output (training/eval_diary.py --json)
+data/*.json
+
+# Scratch audio written by the manual test scripts
+data/_*.wav
 
 # Local overrides
 .env
