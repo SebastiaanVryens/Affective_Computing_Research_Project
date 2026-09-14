@@ -83,6 +83,13 @@ async function main(): Promise<void> {
     world.setLifetimeMood(worldState.lifetimeTotals);
 
     const summary = summarize(entries);
+
+    // With no face, voice or words arriving, the world settles to this rather
+    // than to neutral grey — so opening the app shows the world you have
+    // actually built, and it is already coloured before the camera has produced
+    // a single reading.
+    if (entries.length > 0) mood.setResting(summary.vector);
+
     hud.setLifetime(
       entries.length > 0 ? mixedColor(summary.vector) : '#6f7793',
       describeLifetime(summary.vector, summary.totalEntries, summary.streakDays)
