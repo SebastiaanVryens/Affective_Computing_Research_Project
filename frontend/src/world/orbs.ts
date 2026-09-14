@@ -184,6 +184,9 @@ export class MemoryOrbs {
         emissiveIntensity: CORE_EMISSIVE_BASE,
         roughness: 0.15,
         metalness: 0.1,
+        // The scene fog is tuned for the island's distances; the galaxy lives on
+        // the other floor and must look exactly as it always has.
+        fog: false,
       });
       const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.78, 4), material);
 
@@ -234,6 +237,22 @@ export class MemoryOrbs {
    */
   positionForNewEntry(entryCount: number): THREE.Vector3 {
     return spiralPosition(entryCount);
+  }
+
+  /**
+   * World position of a core memory's orb, if it has one.
+   *
+   * Queried per frame by the threads in threads.ts. It has to be live rather
+   * than baked because `coreGroup` counter-rotates against the galaxy — a thread
+   * anchored to where the orb was would slide off it within a minute.
+   */
+  coreAnchor(entryId: string, out: THREE.Vector3): boolean {
+    for (const mesh of this.coreMeshes) {
+      if (mesh.userData.entryId !== entryId) continue;
+      mesh.getWorldPosition(out);
+      return true;
+    }
+    return false;
   }
 
   /** Ray-pick an orb. Used for clicking a memory to read it back. */
@@ -294,6 +313,7 @@ export class LiveOrb {
       metalness: 0.0,
       transparent: true,
       opacity: 0,
+      fog: false,
     });
     this.mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(1.35, 5), this.material);
     this.mesh.position.set(0, 1.2, 0);
@@ -359,6 +379,9 @@ function makeOrbMaterial(): THREE.MeshStandardMaterial {
     roughness: 0.28,
     metalness: 0.05,
     emissiveIntensity: 1.0,
+    // See the note on the core-memory material: the fog belongs to the mind
+    // floor, and the galaxy is not on it.
+    fog: false,
   });
 
   material.onBeforeCompile = (shader) => {

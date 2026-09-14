@@ -18,7 +18,9 @@ import { allEntries, loadWorld } from './state/db';
 import { summarize } from './state/history';
 import { Hud, describeLifetime } from './ui/hud';
 import { Modals } from './ui/modals';
-import { MindscapeWorld } from './world/scene';
+import { describePlace } from './world/biomes';
+import { preloadMotifModels } from './world/models';
+import { MindscapeWorld, type WorldView } from './world/scene';
 
 /** How often to re-check whether the sidecar came up. */
 const HEALTH_POLL_MS = 15_000;
@@ -32,10 +34,51 @@ function element<T extends HTMLElement>(id: string): T {
 async function main(): Promise<void> {
   // -- world -----------------------------------------------------------
 
+  // Resolves immediately unless someone has registered .glb models in
+  // world/models.ts, so this costs nothing by default — but awaiting it here
+  // means the island is built once, with the models, rather than built from
+  // primitives and then visibly rebuilt a moment later.
+  await preloadMotifModels();
+
+  const viewButton = element<HTMLButtonElement>('btn-view');
+  const placeCaption = element('place-caption');
+
   const world = new MindscapeWorld(element('world'), {
     onOrbPicked: (entryId) => void modals.showEntry(entryId),
+    // The world owns the view state — it can start a flight of its own — so the
+    // button and the caption follow it rather than each keeping their own copy.
+    onViewChanged: (view: WorldView) => {
+      viewButton.dataset.view = view;
+      showPlaceCaption(view === 'mind');
+    },
   });
   world.start();
+
+  /**
+   * Write the caption for whatever the mind floor is currently showing.
+   *
+   * Built from text nodes rather than innerHTML. The strings are ours — biome
+   * blurbs and motif labels out of fixed tables — but the caption sits next to
+   * a transcript of whatever somebody said out loud, and the habit of never
+   * assembling markup from content is worth keeping even where today's content
+   * happens to be safe.
+   */
+  function renderPlaceCaption(): void {
+    const { headline, detail } = describePlace(world.getPlace(), world.getMotifs());
+    placeCaption.replaceChildren();
+
+    const lead = document.createElement('strong');
+    lead.textContent = headline;
+    placeCaption.append(lead);
+
+    if (detail) placeCaption.append(document.createTextNode(` ${detail}`));
+  }
+
+  function showPlaceCaption(visible: boolean): void {
+    placeCaption.hidden = !visible;
+  }
+
+  viewButton.addEventListener('click', () => world.toggleView());
 
   // -- hud -------------------------------------------------------------
 
@@ -94,6 +137,13 @@ async function main(): Promise<void> {
       entries.length > 0 ? mixedColor(summary.vector) : '#6f7793',
       describeLifetime(summary.vector, summary.totalEntries, summary.streakDays)
     );
+
+    // The world rebuilds the landscape on the next frame (see scene.setEntries),
+    // so the caption is written after it, on the frame the new ground appears.
+    requestAnimationFrame(() => {
+      renderPlaceCaption();
+      showPlaceCaption(world.getView() === 'mind');
+    });
   }
 
   await refreshWorld();
@@ -147,13 +197,20 @@ async function main(): Promise<void> {
   });
 
   // Space bar as a shortcut, since the button is the only control that matters.
+  // C flips floors, so you can go down and look at a memory without breaking
+  // off mid-sentence to find the mouse.
   document.addEventListener('keydown', (event) => {
     const target = event.target as HTMLElement | null;
     const typing =
       target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
-    if (event.code === 'Space' && !typing && element('modal-root').hidden) {
+    if (typing || !element('modal-root').hidden) return;
+
+    if (event.code === 'Space') {
       event.preventDefault();
       recordButton.click();
+    } else if (event.code === 'KeyC') {
+      event.preventDefault();
+      world.toggleView();
     }
   });
 
@@ -225,7 +282,10 @@ async function main(): Promise<void> {
 
   // Expose a little for console debugging during development.
   if (import.meta.env.DEV) {
-    Object.assign(window, { mindscape: { world, session, mood, face, refreshWorld } });
+    const THREE = await import('three');
+    Object.assign(window, {
+      mindscape: { world, session, mood, face, refreshWorld, THREE },
+    });
   }
 }
 

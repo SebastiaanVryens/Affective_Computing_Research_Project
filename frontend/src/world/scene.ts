@@ -1,10 +1,32 @@
 /**
  * The render loop and camera.
  *
- * You don't walk around. The camera sits at a fixed distance, drifts slowly, and
- * parallaxes a little with the pointer — enough that the world feels inhabited
- * without asking the user to learn controls while they're trying to talk about
- * their day.
+ * The world has two floors and one camera that flies between them:
+ *
+ *   mind — a small piece of ground built from what you keep talking about, at
+ *          y = 0. This is what opens, because the first thing the app should
+ *          say is "here is what you have become", not "here are four hundred
+ *          data points".
+ *   core — the memory orbs, one per entry, seventy-eight units below. The
+ *          evidence the ground above was summarised from.
+ *
+ * Both floors are framed at about the same distance, on purpose. They are two
+ * rooms, not a room and a map: the orbs surround you at arm's length and so does
+ * the ground, so switching changes what is around you rather than how far back
+ * you are standing.
+ *
+ * One scene rather than two, and that is the decision the rest of this file
+ * follows from. You can talk in either floor and switch while you are talking,
+ * so the live orb, the keyword field, the mood bus and the bloom pass all have
+ * to survive the move — which they do trivially if the move is a camera
+ * animation and not a teardown. It also makes the descent literal: the memory
+ * threads you follow down are real geometry in real space, anchored at both
+ * ends to the two things they connect.
+ *
+ * You still don't walk around. The camera orbits, drifts, and parallaxes with
+ * the pointer; the wheel dollies in and out. That is the whole control scheme,
+ * because someone trying to talk about their day should not also be learning
+ * flight controls.
  *
  * The loop reads the mood bus directly every frame rather than subscribing to
  * events. Rendering should never be gated on a network reply, a model, or a
@@ -18,18 +40,94 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-import { type Emotion, type EmotionVector } from '../emotions';
+import { type Emotion, type EmotionVector, zeroVector } from '../emotions';
 import { mood } from '../capture/mood';
 import type { DiaryEntry } from '../state/db';
 import { Atmosphere } from './atmosphere';
 import { KeywordField } from './keywords';
+import { CORE_LEVEL, MIND_LEVEL, Mindscape } from './mindscape';
 import { LiveOrb, MemoryOrbs } from './orbs';
+import { MemoryThreads } from './threads';
+import type { BiomeChoice } from './biomes';
+import type { MotifPresence } from './motifs';
 
-const CAMERA_DISTANCE = 22;
-const CAMERA_HEIGHT = 4.2;
+export type WorldView = 'mind' | 'core';
+
+/**
+ * Where the camera stands on each floor.
+ *
+ * `stageHeight` is where the live orb and the drifting keywords sit above that
+ * floor — on the core floor it reproduces exactly where they have always been,
+ * and on the mind floor it puts them hovering over the mouth of the well, so a
+ * session recorded from the top has the words rising out of the shaft.
+ */
+interface Rig {
+  radius: number;
+  height: number;
+  lookHeight: number;
+  orbitSpeed: number;
+  sway: number;
+  stageHeight: number;
+  parallax: number;
+}
+
+const RIGS: Record<WorldView, Rig> = {
+  mind: {
+    // Deliberately close to the core rig below. Both floors are meant to be
+    // rooms you are standing in — switching view should change what surrounds
+    // you, not pull back to survey it from altitude.
+    radius: 24,
+    height: 9,
+    lookHeight: 1.4,
+    // A little slower than the core's orbit: the ground is a continuous surface
+    // rather than scattered points, so the same angular rate reads as faster.
+    orbitSpeed: 0.026,
+    sway: 0.7,
+    stageHeight: 3.2,
+    parallax: 2.6,
+  },
+  core: {
+    radius: 22,
+    height: 4.2,
+    lookHeight: 1,
+    orbitSpeed: 0.035,
+    sway: 0.6,
+    stageHeight: 1.2,
+    parallax: 2.4,
+  },
+};
+
+/**
+ * How long the flight between floors takes at full distance.
+ *
+ * Long enough to see the shaft go by, short enough that someone who only wanted
+ * to check a memory isn't waiting on a cutscene. An interrupted flight scales
+ * this by the distance still to cover, so tapping the button twice doesn't buy a
+ * fresh two and a half seconds to travel a tenth of the way.
+ */
+const TRAVEL_SECONDS = 2.6;
+
+const BASE_FOV = 52;
+
+/**
+ * Where the haze starts and where it becomes total.
+ *
+ * These two numbers are what make the mind floor a single picture rather than a
+ * set of objects at different distances. `NEAR` sits past the far edge of the
+ * island, so nothing you are actually looking at is touched; `FAR` sits inside
+ * the sea's own radius (water.ts), so the water reaches full haze *before* it
+ * runs out — which is the entire trick to having a horizon instead of a rim.
+ *
+ * Everything that must not be fogged opts out at its own material: the memory
+ * orbs, the drifting keywords, and every additive glow. Fog on an additive
+ * surface brightens it with distance, which is worse than no fog.
+ */
+const FOG_NEAR = 35;
+const FOG_FAR = 200;
 
 export interface SceneCallbacks {
   onOrbPicked?: (entryId: string) => void;
+  onViewChanged?: (view: WorldView) => void;
 }
 
 export class MindscapeWorld {
@@ -40,9 +138,15 @@ export class MindscapeWorld {
   private bloom: UnrealBloomPass;
 
   private atmosphere = new Atmosphere();
+  private mindscape = new Mindscape();
   private orbs = new MemoryOrbs();
   private liveOrb = new LiveOrb();
   private keywords = new KeywordField();
+  /**
+   * Lives here rather than in the mindscape because it is the only object that
+   * spans both floors, and this is the only class that can see both.
+   */
+  private threads = new MemoryThreads();
 
   private clock = new THREE.Clock();
   private raycaster = new THREE.Raycaster();
@@ -50,6 +154,32 @@ export class MindscapeWorld {
   /** Where the camera is being nudged by the pointer, in normalised units. */
   private parallax = new THREE.Vector2();
   private parallaxTarget = new THREE.Vector2();
+
+  /** Accumulated, not derived from elapsed: the two floors orbit at different
+   *  rates, and an angle computed as `elapsed * speed` would jump the moment
+   *  the speed being blended changed. */
+  private orbitAngle = 0;
+
+  private view: WorldView = 'mind';
+  /** 0 = fully on the island, 1 = fully at the orbs. */
+  private blend = 0;
+  private travel = 1;
+  private travelFrom = 0;
+  private travelTo = 0;
+  private travelSeconds = TRAVEL_SECONDS;
+
+  private zoom = 1;
+  private zoomTarget = 1;
+  private lastFov = BASE_FOV;
+
+  /** The haze colour, recomputed each frame from the sky. Reused, never new'd. */
+  private haze = new THREE.Color('#6f7793');
+  private fog = new THREE.Fog(0x6f7793, FOG_NEAR, FOG_FAR);
+
+  /** The island is rebuilt from these, once per frame at most. See setEntries. */
+  private pendingEntries: DiaryEntry[] = [];
+  private pendingLifetime: EmotionVector = zeroVector();
+  private landscapeDirty = true;
 
   private frameHandle = 0;
   private running = false;
@@ -72,16 +202,25 @@ export class MindscapeWorld {
     container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(
-      52,
+      BASE_FOV,
       container.clientWidth / Math.max(1, container.clientHeight),
       0.1,
-      500
+      // Far enough to keep the island in view from the core floor, plus the
+      // sky sphere behind it.
+      600
     );
-    this.camera.position.set(0, CAMERA_HEIGHT, CAMERA_DISTANCE);
-    this.camera.lookAt(0, 1, 0);
+
+    // The galaxy is moved as a whole rather than by rewriting every entry's
+    // stored position: worldPosition is written once when an entry is saved and
+    // must never change afterwards, or old memories would drift every time the
+    // layout was touched. See world/placement.ts.
+    this.orbs.group.position.y = CORE_LEVEL;
+    this.scene.fog = this.fog;
 
     this.scene.add(
       this.atmosphere.group,
+      this.mindscape.group,
+      this.threads.group,
       this.orbs.group,
       this.liveOrb.mesh,
       this.keywords.group
@@ -98,6 +237,8 @@ export class MindscapeWorld {
       // sky pixel cleared it and the entire backdrop glowed. The orbs carry
       // emissiveIntensity 1.0–2.4, so sitting just under 1 keeps the glow on
       // the things that are meant to be emitting and off everything else.
+      // The island's beacons and shaft rings clear it deliberately, by carrying
+      // colours multiplied past 1 — see mindscape.ts.
       0.9
     );
     this.composer.addPass(this.bloom);
@@ -107,6 +248,9 @@ export class MindscapeWorld {
 
     this.setSize();
     this.bindEvents();
+    // Placed before the first frame so there is never a frame of empty space
+    // while the camera settles.
+    this.updateCamera(0, 0, 0);
   }
 
   // -- lifecycle -------------------------------------------------------
@@ -128,9 +272,12 @@ export class MindscapeWorld {
     this.resizeObserver?.disconnect();
     window.removeEventListener('pointermove', this.onPointerMove);
     this.renderer.domElement.removeEventListener('click', this.onClick);
+    this.renderer.domElement.removeEventListener('wheel', this.onWheel);
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
 
     this.atmosphere.dispose();
+    this.mindscape.dispose();
+    this.threads.dispose();
     this.orbs.dispose();
     this.liveOrb.dispose();
     this.keywords.dispose();
@@ -141,13 +288,63 @@ export class MindscapeWorld {
 
   // -- world content ---------------------------------------------------
 
-  /** Rebuild the permanent galaxy. Call after saving, deleting, or on load. */
+  /**
+   * Rebuild from what's in the database. Call after saving, deleting, or on load.
+   *
+   * The orbs rebuild immediately — they're a direct picture of the entry list.
+   * The island is deferred to the next frame and coalesced, because it depends
+   * on both the entries *and* the lifetime totals, which arrive as two separate
+   * calls from main.ts. Marking dirty and rebuilding once makes the result
+   * independent of which order they land in, and costs at most one frame.
+   */
   setEntries(entries: DiaryEntry[]): void {
     this.orbs.rebuild(entries);
+    this.pendingEntries = entries;
+    this.landscapeDirty = true;
   }
 
   setLifetimeMood(totals: EmotionVector): void {
     this.atmosphere.setLifetimeMood(totals);
+    this.pendingLifetime = totals;
+    this.landscapeDirty = true;
+  }
+
+  /** What the ground currently shows, strongest theme first. */
+  getMotifs(): MotifPresence[] {
+    return this.mindscape.getMotifs();
+  }
+
+  /** Which kind of place the diary has turned out to be. */
+  getPlace(): BiomeChoice {
+    return this.mindscape.getPlace();
+  }
+
+  // -- view ------------------------------------------------------------
+
+  getView(): WorldView {
+    return this.view;
+  }
+
+  /**
+   * Fly to the other floor.
+   *
+   * Safe to call mid-flight: the move restarts from wherever the camera
+   * currently is, over a duration scaled to the distance left, so reversing
+   * halfway doesn't stall and doesn't snap.
+   */
+  setView(view: WorldView): void {
+    if (view === this.view) return;
+    this.view = view;
+    this.travelFrom = this.blend;
+    this.travelTo = view === 'core' ? 1 : 0;
+    this.travel = 0;
+    this.travelSeconds =
+      TRAVEL_SECONDS * Math.max(0.35, Math.abs(this.travelTo - this.travelFrom));
+    this.callbacks.onViewChanged?.(view);
+  }
+
+  toggleView(): void {
+    this.setView(this.view === 'mind' ? 'core' : 'mind');
   }
 
   /**
@@ -177,10 +374,30 @@ export class MindscapeWorld {
     const elapsed = this.clock.elapsedTime;
     const snapshot = mood.current();
 
+    if (this.landscapeDirty) {
+      this.landscapeDirty = false;
+      this.mindscape.rebuild(this.pendingEntries, this.pendingLifetime);
+      this.threads.rebuild(this.mindscape.getThreadAnchors());
+    }
+
+    this.advanceTravel(delta);
+
     this.atmosphere.update(delta, elapsed, snapshot);
+
+    // One haze colour, read off the sky and handed to everything that has to
+    // agree with it. The fog and the sea's reflection are the same value, which
+    // is why the far water has no edge.
+    this.atmosphere.horizonColor(this.haze);
+    this.fog.color.copy(this.haze);
+
+    this.mindscape.update(delta, elapsed, snapshot, this.haze);
     this.orbs.update(delta, elapsed, snapshot.arousal);
     this.liveOrb.update(delta, elapsed, snapshot);
     this.keywords.update(delta, elapsed);
+    this.threads.update(
+      (entryId, out) => this.orbs.coreAnchor(entryId, out),
+      elapsed
+    );
 
     this.updateCamera(delta, elapsed, snapshot.arousal);
 
@@ -192,21 +409,92 @@ export class MindscapeWorld {
     this.composer.render();
   };
 
+  /**
+   * Advance the flight between floors.
+   *
+   * Smootherstep rather than a plain ease: the descent starts and ends with zero
+   * acceleration as well as zero velocity, which is the difference between
+   * falling and being dropped.
+   */
+  private advanceTravel(delta: number): void {
+    if (this.travel >= 1) return;
+    this.travel = Math.min(1, this.travel + delta / this.travelSeconds);
+    const t = this.travel;
+    const eased = t * t * t * (t * (t * 6 - 15) + 10);
+    this.blend = this.travelFrom + (this.travelTo - this.travelFrom) * eased;
+  }
+
   private updateCamera(delta: number, elapsed: number, arousal: number): void {
     this.parallax.lerp(this.parallaxTarget, Math.min(1, delta * 2.2));
+    this.zoom += (this.zoomTarget - this.zoom) * Math.min(1, delta * 6);
 
-    // Slow idle orbit plus pointer parallax. The orbit is deliberately slower
-    // than the galaxy's own rotation so the two don't beat against each other.
-    const orbit = elapsed * 0.035;
-    const sway = Math.sin(elapsed * 0.21) * 0.6;
+    const blend = this.blend;
+    const mind = RIGS.mind;
+    const core = RIGS.core;
 
-    this.camera.position.x =
-      Math.sin(orbit) * CAMERA_DISTANCE + this.parallax.x * 2.4;
-    this.camera.position.z = Math.cos(orbit) * CAMERA_DISTANCE;
+    /** Non-zero only while actually in flight; peaks halfway down. */
+    const rush = this.travel < 1 ? Math.sin(Math.PI * this.travel) : 0;
+
+    const focusY = MIND_LEVEL + (CORE_LEVEL - MIND_LEVEL) * blend;
+    const lookHeight = lerp(mind.lookHeight, core.lookHeight, blend);
+
+    // How much this particular world turns.
+    //
+    // Not a constant any more. A world that circles relentlessly is tiring to
+    // sit in front of while you are trying to talk about your day, and it is
+    // also a claim — that this place is busy — which most diaries do not
+    // support. The mind floor takes the diary's own restlessness almost
+    // directly, so a settled one barely moves; the core keeps a floor under it,
+    // because a galaxy of memories that is completely static reads as a
+    // photograph rather than a place.
+    const restlessness = this.mindscape.getRestlessness();
+    const mindSpeed = mind.orbitSpeed * (0.06 + 0.94 * restlessness);
+    const coreSpeed = core.orbitSpeed * (0.45 + 0.55 * restlessness);
+
+    // Spiralling down rather than dropping straight: the extra angular rate
+    // during the flight is what makes the threads sweep past the camera instead
+    // of approaching it head-on, which is the whole sensation.
+    this.orbitAngle += delta * (lerp(mindSpeed, coreSpeed, blend) + rush * 0.035);
+
+    // A true dolly toward the look point, so zooming in on the island doesn't
+    // also tip the camera further overhead.
+    const distance = lerp(mind.radius, core.radius, blend) * this.zoom;
+    const height =
+      lookHeight + (lerp(mind.height, core.height, blend) - lookHeight) * this.zoom;
+    const sway = Math.sin(elapsed * 0.21) * lerp(mind.sway, core.sway, blend);
+    const parallaxScale = lerp(mind.parallax, core.parallax, blend);
+
+    this.camera.position.x = Math.sin(this.orbitAngle) * distance + this.parallax.x * parallaxScale;
+    this.camera.position.z = Math.cos(this.orbitAngle) * distance;
     this.camera.position.y =
-      CAMERA_HEIGHT + sway + this.parallax.y * 1.6 + arousal * 0.4;
+      focusY + height + sway + this.parallax.y * 1.6 + arousal * 0.4;
 
-    this.camera.lookAt(0, 1 + this.parallax.y * 0.3, 0);
+    this.camera.lookAt(0, focusY + lookHeight + this.parallax.y * 0.3, 0);
+
+    // A couple of degrees of extra field of view while falling. Widening the
+    // lens as you accelerate is the oldest trick there is for making a move feel
+    // like speed rather than like a lerp, and it costs one matrix update.
+    //
+    // Kept small. A hard zoom during a move the viewer did not initiate with
+    // their own head is one of the reliable ways to make someone queasy, and
+    // the threads now carry the sense of speed on their own.
+    const fov = BASE_FOV + rush * 4;
+    if (Math.abs(fov - this.lastFov) > 0.05) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+      this.lastFov = fov;
+    }
+
+    // Everything that is "where the viewer is" rides along: sky, lights, the
+    // live orb, and the words drifting off it.
+    this.atmosphere.setFocusHeight(focusY);
+    this.mindscape.setDescent(blend);
+
+    const stage = focusY + lerp(mind.stageHeight, core.stageHeight, blend);
+    this.liveOrb.mesh.position.y = stage;
+    // The keyword field spawns its words relative to its own origin, which on
+    // the core floor has always sat 1.2 below the live orb.
+    this.keywords.group.position.y = stage - 1.2;
   }
 
   // -- input -----------------------------------------------------------
@@ -216,6 +504,8 @@ export class MindscapeWorld {
     this.resizeObserver.observe(this.container);
     window.addEventListener('pointermove', this.onPointerMove);
     this.renderer.domElement.addEventListener('click', this.onClick);
+    // Not passive: the page must not scroll behind the canvas while zooming.
+    this.renderer.domElement.addEventListener('wheel', this.onWheel, { passive: false });
     document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
@@ -226,10 +516,33 @@ export class MindscapeWorld {
     this.parallaxTarget.set(this.pointer.x, this.pointer.y * 0.6);
   };
 
+  /**
+   * Wheel dollies in and out.
+   *
+   * The room is framed to be taken in whole, which means a stack of books in it
+   * is small. Being able to lean in is what makes "there are books there because
+   * you talk about books" something you can verify rather than take on trust.
+   */
+  private onWheel = (event: WheelEvent): void => {
+    event.preventDefault();
+    const step = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+    this.zoomTarget = clamp(this.zoomTarget * (1 + step * 0.0011), 0.45, 1.6);
+  };
+
   private onClick = (): void => {
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hit = this.orbs.pick(this.raycaster);
-    if (hit) this.callbacks.onOrbPicked?.(hit.entryId);
+
+    // Whichever floor the camera is nearer owns the click. Mid-flight this
+    // flips at the halfway point, which is also where the island stops being
+    // the thing under the cursor.
+    if (this.blend > 0.5) {
+      const hit = this.orbs.pick(this.raycaster);
+      if (hit) this.callbacks.onOrbPicked?.(hit.entryId);
+      return;
+    }
+
+    const entryId = this.mindscape.pick(this.raycaster);
+    if (entryId) this.callbacks.onOrbPicked?.(entryId);
   };
 
   /**
@@ -258,4 +571,12 @@ export class MindscapeWorld {
     this.composer.setSize(width, height);
     this.bloom.setSize(width, height);
   }
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return value < min ? min : value > max ? max : value;
 }

@@ -1,5 +1,11 @@
 /**
- * The part of the world that reacts instantly: sky, light and drifting motes.
+ * The part of the world that reacts instantly: sky and light.
+ *
+ * There used to be a field of drifting motes in here as well. They are gone —
+ * they read as floating debris rather than as atmosphere, and the sense of
+ * motion they were carrying during the descent is now carried by the memory
+ * threads in threads.ts, which are real objects connecting two real places
+ * rather than particles whose only job was to have something go past.
  *
  * Everything here is driven straight from the live mood bus each frame, so a
  * change of expression shows up in roughly one frame plus the smoothing
@@ -12,8 +18,8 @@
  * thesis of the whole app.
  *
  * The sky deliberately changes *slowly* — several seconds to settle — while the
- * light and motes track faster. A mood shift should be something you notice
- * having happened, not something you watch happen.
+ * light tracks faster. A mood shift should be something you notice having
+ * happened, not something you watch happen.
  */
 
 import * as THREE from 'three';
@@ -288,12 +294,11 @@ const SKY_FRAGMENT = /* glsl */ `
 export class Atmosphere {
   readonly group = new THREE.Group();
 
+  /** Sky and lights. Rides with the viewer between floors. */
+  private frame = new THREE.Group();
+
   private sky: THREE.Mesh;
   private skyUniforms: Record<string, THREE.IUniform>;
-
-  private motes: THREE.Points;
-  private moteVelocities: Float32Array;
-  private moteMaterial: THREE.PointsMaterial;
 
   private keyLight: THREE.DirectionalLight;
   private ambient: THREE.AmbientLight;
@@ -323,7 +328,9 @@ export class Atmosphere {
     1 / EMOTIONS.length
   );
 
-  constructor(moteCount = 900) {
+  constructor() {
+    this.group.add(this.frame);
+
     this.skyUniforms = {
       uMoodColor: { value: new THREE.Color('#8d93a8') },
       uLifetimeColor: { value: new THREE.Color('#1c2033') },
@@ -350,23 +357,61 @@ export class Atmosphere {
         depthWrite: false,
       })
     );
-    this.group.add(this.sky);
-
-    const { points, velocities, material } = buildMotes(moteCount);
-    this.motes = points;
-    this.moteVelocities = velocities;
-    this.moteMaterial = material;
-    this.group.add(this.motes);
+    this.frame.add(this.sky);
 
     this.ambient = new THREE.AmbientLight(0xffffff, 0.55);
     this.keyLight = new THREE.DirectionalLight(0xffffff, 0.7);
     this.keyLight.position.set(6, 12, 8);
+    // The target has to be a child of this group, not the scene's default at the
+    // world origin. The group travels with the camera between floors (see
+    // setFocusHeight), and a target left behind at y = 0 would swing the key
+    // light through ninety degrees on the way down — the island would be lit
+    // from above and the orbs from directly below.
+    this.keyLight.target.position.set(0, 0, 0);
     // Sits just behind the camera and takes the live mood colour, so the orbs
     // nearest the viewer pick up "now" while the rest stay in lifetime colour.
     this.moodLight = new THREE.PointLight(0xffffff, 40, 90, 2);
     this.moodLight.position.set(0, 3, 16);
 
-    this.group.add(this.ambient, this.keyLight, this.moodLight);
+    this.frame.add(this.ambient, this.keyLight, this.keyLight.target, this.moodLight);
+  }
+
+  /**
+   * Move the sky and the lights to whichever floor is being looked at.
+   *
+   * The sky is a 220-unit sphere and the lights are positioned relative to a
+   * viewer at roughly y = 0. Both assumptions are what they always were — this
+   * just keeps them true when the camera drops seventy-odd units to the memory
+   * orbs, rather than leaving the viewer down near the floor of a sphere whose
+   * gradient was composed for its middle.
+   *
+   * It also means the descent has no visible sky motion of its own, which is
+   * correct: the sense of falling should come from the island receding and the
+   * shaft rings passing, not from the horizon sliding, which would read as the
+   * *world* moving rather than you.
+   */
+  setFocusHeight(y: number): void {
+    this.frame.position.y = y;
+  }
+
+  /**
+   * The colour the sky is at eye level, for the scene fog and the sea.
+   *
+   * There is no cheap way to ask the sky shader what it painted at the horizon —
+   * it is a flow field evaluated per pixel — so this reconstructs the same
+   * recipe the shader uses down there: mostly the lifetime layer, a little of
+   * today, and then the vignette that darkens the sky toward its lower half.
+   *
+   * It matters that this stays in step with SKY_FRAGMENT. The whole point of one
+   * haze colour is that the far water, the far hills and the sky behind both of
+   * them end up indistinguishable; get this wrong and the horizon becomes a
+   * visible line, which is the exact failure the fog exists to prevent.
+   */
+  horizonColor(out: THREE.Color): THREE.Color {
+    out.copy(this.lifetimeColor).lerp(this.moodColor, 0.45);
+    // `grounding` is ~0.3 at eye level in the shader, and the lifetime layer is
+    // darkened to 0.42 there; this is that pair of numbers, folded together.
+    return out.multiplyScalar(0.62).addScalar(0.045);
   }
 
   /** Call once when the lifetime totals change (i.e. after an entry is saved). */
@@ -422,80 +467,10 @@ export class Atmosphere {
 
     this.moodLight.color.copy(this.moodColor);
     this.moodLight.intensity = 30 + 55 * mood.arousal;
-    this.moteMaterial.color.copy(this.moodColor).lerp(new THREE.Color(0xffffff), 0.35);
-    this.moteMaterial.opacity = 0.25 + 0.5 * mood.clarity;
-
-    this.driftMotes(delta, mood.arousal);
-  }
-
-  private driftMotes(delta: number, arousal: number): void {
-    const positions = this.motes.geometry.attributes.position
-      .array as Float32Array;
-    // Loud moments make the motes swarm; quiet ones let them settle.
-    const speed = delta * (0.35 + arousal * 3.2);
-
-    for (let i = 0; i < positions.length; i += 3) {
-      positions[i] += this.moteVelocities[i] * speed;
-      positions[i + 1] += this.moteVelocities[i + 1] * speed;
-      positions[i + 2] += this.moteVelocities[i + 2] * speed;
-
-      // Wrap through the origin instead of respawning, so the field never
-      // visibly thins out on one side.
-      const x = positions[i];
-      const y = positions[i + 1];
-      const z = positions[i + 2];
-      if (x * x + y * y + z * z > 60 * 60) {
-        positions[i] = -x * 0.92;
-        positions[i + 1] = -y * 0.92;
-        positions[i + 2] = -z * 0.92;
-      }
-    }
-    this.motes.geometry.attributes.position.needsUpdate = true;
   }
 
   dispose(): void {
     this.sky.geometry.dispose();
     (this.sky.material as THREE.Material).dispose();
-    this.motes.geometry.dispose();
-    this.moteMaterial.dispose();
   }
-}
-
-function buildMotes(count: number): {
-  points: THREE.Points;
-  velocities: Float32Array;
-  material: THREE.PointsMaterial;
-} {
-  const positions = new Float32Array(count * 3);
-  const velocities = new Float32Array(count * 3);
-
-  for (let i = 0; i < count; i++) {
-    // Uniform-ish shell sampling, biased inward so the field reads as volume
-    // rather than as a hollow bubble around the camera.
-    const radius = 8 + Math.pow(Math.random(), 0.6) * 45;
-    const theta = Math.random() * Math.PI * 2;
-    const phi = Math.acos(2 * Math.random() - 1);
-
-    positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
-    positions[i * 3 + 1] = radius * Math.cos(phi) * 0.55; // flattened: more disc than sphere
-    positions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
-
-    velocities[i * 3] = (Math.random() - 0.5) * 0.6;
-    velocities[i * 3 + 1] = Math.random() * 0.35 + 0.05; // gentle upward bias
-    velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.6;
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-  const material = new THREE.PointsMaterial({
-    size: 0.35,
-    sizeAttenuation: true,
-    transparent: true,
-    opacity: 0.5,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-
-  return { points: new THREE.Points(geometry, material), velocities, material };
 }

@@ -188,6 +188,43 @@ button {
   color: var(--ink);
 }
 
+/* --- place caption --- */
+
+/* Sits directly under the top bar, centred. It is a caption, so it reads as one:
+   quiet, narrow, and never competing with the world it is describing. */
+.hud-place {
+  grid-row: 2;
+  grid-column: 1;
+  align-self: start;
+  justify-self: center;
+  margin: 0;
+  padding: 8px 16px;
+  max-width: min(62ch, 82vw);
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-dim);
+  border-radius: 999px;
+}
+
+.hud-place[hidden] {
+  display: none !important;
+}
+
+/* The first sentence names the place — "Your mind is a coast." — and carries
+   the weight. What is in it follows in the same line, dimmer. */
+.hud-place strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .hud-place {
+    font-size: 11.5px;
+    padding: 7px 12px;
+  }
+}
+
 /* --- live emotion panel --- */
 
 .hud-left {
@@ -416,6 +453,72 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .record.is-recording .record-ring {
     animation: none;
+  }
+}
+
+/* --- floor switch --- */
+
+/* Sits directly under the record button and reads as secondary to it: no fill,
+   no shadow, just a label. It is a way of *looking* at the world, not a thing
+   you do to your diary, and giving it the same weight as the record button
+   would make the two compete at the one moment the eye should be drawn to one
+   of them. */
+.view-switch {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.view-switch:hover {
+  background: rgba(255, 255, 255, 0.11);
+  color: var(--ink);
+}
+
+/* Both labels share one grid cell so the button's width is the wider of the
+   two in whatever font actually loads, and pressing it never makes the control
+   resize under the cursor. Same reasoning as the record button above. */
+.view-label {
+  display: grid;
+  text-align: center;
+}
+
+.view-label > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+
+.view-switch[data-view='mind'] > .view-label > [data-view-label='mind'],
+.view-switch[data-view='core'] > .view-label > [data-view-label='core'] {
+  visibility: visible;
+}
+
+/* Points the way the camera is about to travel. */
+.view-arrow {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.8;
+  transition: transform 0.4s ease;
+}
+
+.view-switch[data-view='core'] .view-arrow {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-arrow {
+    transition: none;
   }
 }
 

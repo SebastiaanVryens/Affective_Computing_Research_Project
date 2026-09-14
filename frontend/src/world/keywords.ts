@@ -65,6 +65,9 @@ export class KeywordField {
       transparent: true,
       opacity: 0,
       depthWrite: false,
+      // Additive, and the words have to read identically on both floors — the
+      // scene fog is for the landscape's distances, not for these.
+      fog: false,
       // Additive keeps words luminous against the sky and stops them reading as
       // flat UI stickers pasted over the scene.
       blending: THREE.AdditiveBlending,

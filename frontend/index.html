@@ -38,6 +38,13 @@
         </nav>
       </header>
 
+      <!-- Names the place and what is in it. Permanent while you are looking at
+           the mind floor, because it is the caption for what is on screen — you
+           should never have to remember why the world looks the way it does, or
+           travel somewhere to be told. Hidden at the core, which needs no
+           caption: an orb is one entry and says so when you click it. -->
+      <p id="place-caption" class="hud hud-place" hidden></p>
+
       <!-- Live per-emotion readout, updated from the mood bus. -->
       <aside id="emotion-panel" class="hud hud-left" aria-live="off">
         <h2>Right now</h2>
@@ -67,6 +74,19 @@
             <span data-label="busy">Making sense of it…</span>
           </span>
         </button>
+
+        <!-- Moves the camera between the two floors of the world: the island
+             built from what you talk about, and the memory orbs underneath it.
+             Same stacked-label trick as the record button, so the control does
+             not change width when you press it. -->
+        <button id="btn-view" class="view-switch" data-view="mind">
+          <span class="view-arrow" aria-hidden="true">▾</span>
+          <span class="view-label">
+            <span data-view-label="mind">View core</span>
+            <span data-view-label="core">Back to your mind</span>
+          </span>
+        </button>
+
         <p id="record-hint">
           Your camera and voice stay on this machine.
         </p>
