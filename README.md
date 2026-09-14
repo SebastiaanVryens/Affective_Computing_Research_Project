@@ -164,8 +164,52 @@ Designed in rather than bolted on:
 - Audio goes only to a sidecar **on your own machine**. Whisper is local.
 - The backend is **stateless** — audio in, numbers out, nothing written to disk.
 - Diary entries live in **IndexedDB** in your browser. Export or wipe from History.
+- The **clinical PDF is rendered in the browser too**, via print-to-PDF. Sending
+  diary content to the sidecar to render it would have broken the one guarantee
+  the app makes, so it does not.
 
 No cloud service sees any of it.
+
+### Sharing with a clinician
+
+History → **Summary for a doctor (PDF)** asks for a name and a period, then
+produces a printable report: adherence, day-by-day chart, trend direction,
+day-to-day variability, consecutive negative days, time-of-day pattern, verbatim
+quotes from the most marked entries, recurring themes, and which channels the
+summary actually rests on.
+
+Three things about it are deliberate:
+
+**It computes nothing that resembles a screening score** and flags no risk. A
+false negative from a face model has no business reassuring anyone, and a false
+positive has no business alarming them.
+
+**Every derived figure carries its sample.** A trend needs 7 recorded days and a
+variability figure needs 5 adjacent pairs — below that the report says so rather
+than printing a confident number fitted through four points. Fewer than five
+entries triggers a caution box.
+
+**Provenance is a section, not a footnote.** If 80% of entries had the camera off,
+the summary is a summary of *words*, and the reader can see that instead of
+assuming three channels were always present.
+
+Surprise is counted as neither positive nor negative, despite MELD's own sentiment
+mapping calling it positive — a shock and a delight are both surprise, and
+counting it as positive would quietly inflate every positive figure in a document
+someone might make decisions from.
+
+The raw JSON export is still there for backup and portability.
+
+The report is rendered into the live DOM and printed, rather than into an
+iframe. That makes the print lifecycle load-bearing: `window.print()` blocks
+until the dialog closes in Chrome and Firefox, so `afterprint` fires while that
+call is still on the stack. Registering the listener *after* calling print means
+it is attached after the event has already passed, cleanup never runs, and the
+next export appends a second report beside the first — both match
+`#print-report`, so the PDF comes out containing the whole document twice. The
+listener therefore goes on before print, cleanup removes every matching node
+rather than just its own, and a re-entrancy flag stops a double-click starting a
+second run.
 
 ---
 

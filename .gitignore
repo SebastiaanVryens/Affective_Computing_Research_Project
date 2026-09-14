@@ -28,3 +28,9 @@ data/_*.wav
 # Local overrides
 .env
 .env.local
+
+# Demo data seeder — development only, never shipped.
+# Delete these two paths to remove the feature entirely; nothing imports them
+# and `vite build` already excludes demo.html (only index.html is an entry).
+frontend/demo.html
+frontend/src/dev/

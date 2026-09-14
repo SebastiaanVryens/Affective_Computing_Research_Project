@@ -1,0 +1,350 @@
+/*
+ * Print styles for the clinical report.
+ *
+ * The app is a dark 3D world; this is a paper document. Nothing is shared
+ * between them deliberately — a report that someone prints should look like
+ * something from a clinic, not like a screenshot of a game.
+ *
+ * The report element is hidden on screen and only laid out for print, so it can
+ * be built into the live DOM without disturbing the app behind it.
+ */
+
+#print-report {
+  display: none;
+}
+
+@media print {
+  /* Hide the app entirely; only the report goes on paper. */
+  body.printing > *:not(#print-report) {
+    display: none !important;
+  }
+
+  body.printing {
+    background: #fff;
+    overflow: visible;
+  }
+
+  #print-report {
+    display: block;
+    color: #16181d;
+    background: #fff;
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+  }
+
+  @page {
+    size: A4;
+    margin: 18mm 16mm;
+  }
+
+  /* --- header --- */
+
+  .rp-header {
+    border-bottom: 2px solid #16181d;
+    padding-bottom: 10pt;
+    margin-bottom: 14pt;
+  }
+
+  .rp-title {
+    margin: 0 0 8pt;
+    font-size: 19pt;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .rp-kv {
+    display: flex;
+    gap: 8pt;
+    font-size: 10pt;
+    margin-bottom: 2pt;
+  }
+
+  .rp-kv-key {
+    min-width: 62pt;
+    color: #5c6270;
+  }
+
+  .rp-kv-value {
+    font-weight: 600;
+  }
+
+  /* --- the notice ---
+     Boxed and kept with the header so it cannot be separated from the title
+     by a page break. If only one page of this document is ever read, it must
+     be the page carrying this. */
+
+  .rp-notice {
+    border: 1pt solid #16181d;
+    padding: 10pt 12pt;
+    margin-bottom: 16pt;
+    break-inside: avoid;
+    background: #f4f5f7;
+  }
+
+  .rp-notice-title {
+    margin: 0 0 6pt;
+    font-size: 10.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .rp-notice p {
+    margin: 0 0 5pt;
+    font-size: 9.5pt;
+    line-height: 1.45;
+  }
+
+  .rp-notice p:last-child {
+    margin-bottom: 0;
+  }
+
+  /* --- sections --- */
+
+  .rp-section {
+    margin-bottom: 16pt;
+    /* Never strand a heading at the foot of a page. */
+    break-inside: avoid-page;
+  }
+
+  .rp-section-title {
+    margin: 0 0 7pt;
+    font-size: 12.5pt;
+    font-weight: 700;
+    border-bottom: 0.75pt solid #c8ccd4;
+    padding-bottom: 3pt;
+    break-after: avoid;
+  }
+
+  .rp-subhead {
+    margin: 12pt 0 5pt;
+    font-size: 10.5pt;
+    font-weight: 700;
+    break-after: avoid;
+  }
+
+  .rp-lead {
+    margin: 0 0 9pt;
+    font-size: 10pt;
+    color: #3b404b;
+  }
+
+  .rp-note {
+    font-size: 9pt;
+    color: #5c6270;
+    margin: 6pt 0 0;
+  }
+
+  .rp-caution {
+    margin: 9pt 0 0;
+    padding: 7pt 9pt;
+    border-left: 2.5pt solid #16181d;
+    background: #f4f5f7;
+    font-size: 9.5pt;
+  }
+
+  /* --- stat grid --- */
+
+  .rp-stats {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8pt;
+  }
+
+  .rp-stat {
+    display: flex;
+    flex-direction: column;
+    padding: 7pt 4pt;
+    border: 0.75pt solid #d5d9e0;
+    text-align: center;
+  }
+
+  .rp-stat-value {
+    font-size: 14pt;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+
+  .rp-stat-label {
+    font-size: 7.5pt;
+    color: #5c6270;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 2pt;
+  }
+
+  /* --- distribution bars --- */
+
+  .rp-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 4pt;
+  }
+
+  .rp-bar-row {
+    display: grid;
+    grid-template-columns: 62pt 1fr 32pt;
+    align-items: center;
+    gap: 7pt;
+    font-size: 9.5pt;
+  }
+
+  .rp-bar-track {
+    height: 8pt;
+    background: #eaecf0;
+    border-radius: 1pt;
+    overflow: hidden;
+  }
+
+  .rp-bar-fill {
+    display: block;
+    height: 100%;
+    /* Colours are meaning here, not decoration, so they must survive the
+       browser's "economy mode" colour stripping. */
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .rp-bar-value {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: #3b404b;
+  }
+
+  /* --- chart --- */
+
+  .rp-chart {
+    width: 100%;
+    height: auto;
+    margin: 2pt 0 6pt;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .rp-axis {
+    stroke: #c8ccd4;
+    stroke-width: 0.75;
+  }
+
+  .rp-chart-label {
+    font-size: 8px;
+    fill: #5c6270;
+  }
+
+  .rp-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10pt;
+    font-size: 9pt;
+    color: #3b404b;
+  }
+
+  .rp-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4pt;
+  }
+
+  .rp-swatch {
+    display: inline-block;
+    width: 7pt;
+    height: 7pt;
+    border-radius: 50%;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* --- findings list --- */
+
+  .rp-findings {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 96pt 1fr;
+    gap: 4pt 10pt;
+    font-size: 10pt;
+  }
+
+  .rp-findings dt {
+    font-weight: 600;
+    color: #5c6270;
+  }
+
+  .rp-findings dd {
+    margin: 0;
+  }
+
+  /* --- tables --- */
+
+  .rp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+  }
+
+  .rp-table th {
+    text-align: left;
+    font-weight: 600;
+    color: #5c6270;
+    border-bottom: 0.75pt solid #c8ccd4;
+    padding: 3pt 6pt 3pt 0;
+    font-size: 8.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .rp-table td {
+    padding: 3.5pt 6pt 3.5pt 0;
+    border-bottom: 0.5pt solid #eaecf0;
+    vertical-align: top;
+  }
+
+  .rp-table td:nth-child(2) {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- quotes ---
+     A quote split across a page break loses its attribution line, which is
+     exactly the context that makes it readable. */
+
+  .rp-quote {
+    margin: 0 0 9pt;
+    padding: 1pt 0 1pt 10pt;
+    border-left: 2.5pt solid #c8ccd4;
+    break-inside: avoid;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .rp-quote-text {
+    margin: 0;
+    font-size: 10.5pt;
+    line-height: 1.45;
+  }
+
+  .rp-quote-meta {
+    margin: 3pt 0 0;
+    font-size: 8.5pt;
+    color: #5c6270;
+  }
+
+  .rp-quote-note {
+    margin: 4pt 0 0;
+    font-size: 9pt;
+    font-style: italic;
+    color: #3b404b;
+  }
+
+  /* --- method list --- */
+
+  .rp-list {
+    margin: 0;
+    padding-left: 14pt;
+    font-size: 9.5pt;
+    line-height: 1.45;
+  }
+
+  .rp-list li {
+    margin-bottom: 4pt;
+  }
+}

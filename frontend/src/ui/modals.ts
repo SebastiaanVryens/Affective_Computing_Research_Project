@@ -15,6 +15,8 @@ import {
   type EmotionVector,
 } from '../emotions';
 import type { HealthResponse } from '../api';
+import { type Period } from '../state/report';
+import { generateReport } from './report';
 import {
   type Bucket,
   type Granularity,
@@ -158,7 +160,7 @@ export class Modals {
       content.append(this.buildEntryRow(entry));
     }
 
-    content.append(this.buildExportRow());
+    content.append(this.buildExportRow(entries));
   }
 
   private renderBucketDetail(bucket: Bucket, allEntriesList: DiaryEntry[]): void {
@@ -466,17 +468,23 @@ export class Modals {
     return actions;
   }
 
-  private buildExportRow(): HTMLElement {
+  private buildExportRow(entries: DiaryEntry[]): HTMLElement {
     const row = document.createElement('div');
     row.style.cssText =
-      'display:flex;gap:8px;margin-top:26px;padding-top:18px;border-top:1px solid rgba(255,255,255,0.07);';
+      'display:flex;gap:8px;margin-top:26px;padding-top:18px;border-top:1px solid rgba(255,255,255,0.07);flex-wrap:wrap;';
 
-    const button = document.createElement('button');
-    button.className = 'ghost';
-    button.textContent = 'Export everything (JSON)';
-    button.addEventListener('click', async () => {
-      const json = await exportAll();
-      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    const report = document.createElement('button');
+    report.className = 'ghost';
+    report.textContent = 'Summary for a doctor (PDF)';
+    report.addEventListener('click', () => this.renderReportForm(entries));
+
+    const json = document.createElement('button');
+    json.className = 'ghost';
+    json.textContent = 'Raw data (JSON)';
+    json.title = 'Everything, unprocessed — for backup or moving to another device';
+    json.addEventListener('click', async () => {
+      const data = await exportAll();
+      const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
       const link = document.createElement('a');
       link.href = url;
       link.download = `mindscape-${new Date().toISOString().slice(0, 10)}.json`;
@@ -485,8 +493,111 @@ export class Modals {
       this.callbacks.onToast('Exported');
     });
 
-    row.append(button);
+    row.append(report, json);
     return row;
+  }
+
+  /**
+   * Asks for a name and a period before generating the report.
+   *
+   * The name is asked rather than stored: this document is meant to be handed
+   * to someone, and a diary that quietly knew your legal name would be a
+   * different and more sensitive thing than one that doesn't. It is used for
+   * this render and never written to the database.
+   */
+  private renderReportForm(entries: DiaryEntry[]): void {
+    const content = this.host.content;
+    content.replaceChildren();
+
+    const back = document.createElement('button');
+    back.className = 'ghost';
+    back.textContent = '← Back';
+    back.style.marginBottom = '16px';
+    back.addEventListener('click', () => this.renderHistory(entries));
+    content.append(back);
+
+    content.append(
+      heading(
+        'Summary for a doctor or psychologist',
+        'A readable summary of your entries — patterns over time, recurring themes, ' +
+          'and your own words. Generated on this device and never uploaded.'
+      )
+    );
+
+    const field = document.createElement('label');
+    field.style.cssText = 'display:block;margin:0 0 18px;';
+    field.append(
+      Object.assign(document.createElement('span'), {
+        textContent: 'Name to put on the report',
+        style: 'display:block;font-size:12px;color:#a8b0c8;margin-bottom:6px;',
+      })
+    );
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Your name';
+    input.autocomplete = 'name';
+    input.style.cssText =
+      'width:100%;max-width:340px;padding:9px 12px;border-radius:10px;' +
+      'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);' +
+      'color:#f2f4fb;font-family:inherit;font-size:14px;';
+    field.append(input);
+    content.append(field);
+
+    const periodLabel = document.createElement('p');
+    periodLabel.style.cssText = 'font-size:12px;color:#a8b0c8;margin:0 0 8px;';
+    periodLabel.textContent = 'Period to cover';
+    content.append(periodLabel);
+
+    let period: Period = 'all';
+    const switcher = document.createElement('div');
+    switcher.className = 'granularity';
+    switcher.style.marginBottom = '22px';
+    const options: Array<[Period, string]> = [
+      ['all', 'Everything'],
+      ['90d', 'Last 90 days'],
+      ['30d', 'Last 30 days'],
+    ];
+    for (const [value, label] of options) {
+      const button = document.createElement('button');
+      button.textContent = label;
+      button.setAttribute('aria-pressed', String(value === period));
+      button.addEventListener('click', () => {
+        period = value;
+        for (const sibling of switcher.children) {
+          sibling.setAttribute('aria-pressed', String(sibling === button));
+        }
+      });
+      switcher.append(button);
+    }
+    content.append(switcher);
+
+    const generate = document.createElement('button');
+    generate.className = 'ghost';
+    generate.style.cssText =
+      'background:rgba(255,255,255,0.16);color:#f2f4fb;padding:10px 18px;font-size:13px;';
+    generate.textContent = 'Create PDF';
+    const run = () => {
+      // The modal must be closed first: it sits above the report in the DOM and
+      // the print stylesheet hides siblings, not ancestors' overlays.
+      this.close();
+      generateReport(entries, input.value, period);
+    };
+    generate.addEventListener('click', run);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') run();
+    });
+
+    content.append(
+      generate,
+      paragraph(
+        'Your browser will open its print dialog — choose "Save as PDF" as the ' +
+          'destination. Nothing is sent anywhere.',
+        'subtitle'
+      )
+    );
+
+    input.focus();
   }
 }
 

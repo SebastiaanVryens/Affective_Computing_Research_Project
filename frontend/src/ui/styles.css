@@ -345,6 +345,25 @@ button {
   transition: transform 0.16s ease, border-color 0.25s ease;
 }
 
+/* Every label occupies the same grid cell, so the track is as wide as the
+   widest of them and the button's width never depends on which is showing.
+   Hidden labels keep their space — `visibility`, not `display`. */
+.record-label {
+  display: grid;
+  text-align: center;
+}
+
+.record-label > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+
+.record[data-state='idle'] > .record-label > [data-label='idle'],
+.record[data-state='recording'] > .record-label > [data-label='recording'],
+.record[data-state='busy'] > .record-label > [data-label='busy'] {
+  visibility: visible;
+}
+
 .record:hover {
   transform: translateY(-1.5px);
 }
@@ -393,8 +412,15 @@ button {
 #record-hint {
   margin: 0;
   font-size: 11px;
+  line-height: 1.35;
   color: var(--ink-faint);
   text-align: center;
+  /* Two lines are always reserved. The hint changes text with the recording
+     state, and it sits below the button in a bottom-anchored column — so a
+     longer hint wrapping onto a second line would push the button upward at
+     exactly the moment the user is looking at it. */
+  min-height: 2.7em;
+  max-width: 34ch;
 }
 
 /* --- modal --- */

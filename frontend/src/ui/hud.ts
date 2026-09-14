@@ -19,7 +19,6 @@ export interface HudElements {
   transcriptPanel: HTMLElement;
   transcriptText: HTMLElement;
   recordButton: HTMLButtonElement;
-  recordLabel: HTMLElement;
   recordHint: HTMLElement;
   brandDot: HTMLElement;
   lifetimeSummary: HTMLElement;
@@ -183,15 +182,18 @@ export class Hud {
     this.recording = active;
     this.renderTranscript();
     this.el.recordButton.classList.toggle('is-recording', active);
-    this.el.recordLabel.textContent = active ? 'Finish entry' : 'Talk about your day';
+    // The label is chosen in CSS from this attribute; all three are already in
+    // the DOM so the button's width cannot change with the state.
+    this.el.recordButton.dataset.state = active ? 'recording' : 'idle';
     this.el.recordHint.textContent = active
       ? 'Take your time. Everything is processed on this machine.'
       : 'Your camera and voice stay on this machine.';
   }
 
-  setBusy(busy: boolean, label = 'Making sense of it…'): void {
+  setBusy(busy: boolean): void {
     this.el.recordButton.disabled = busy;
-    if (busy) this.el.recordLabel.textContent = label;
+    if (busy) this.el.recordButton.dataset.state = 'busy';
+    else if (!this.recording) this.el.recordButton.dataset.state = 'idle';
   }
 
   /** Lifetime colour on the brand dot, plus the one-line summary. */

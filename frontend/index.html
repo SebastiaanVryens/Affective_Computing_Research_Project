@@ -53,9 +53,19 @@
       </section>
 
       <footer class="hud hud-bottom">
-        <button id="btn-record" class="record">
+        <!-- All three labels ship in the markup and are stacked on top of each
+             other, with only the active one visible. The button then sizes
+             itself to the widest label in whatever font actually loads, so it
+             never changes width when the state changes — and never appears to
+             jump. A min-width in pixels would have to be guessed, and would be
+             wrong the moment Inter fails to load and the fallback is wider. -->
+        <button id="btn-record" class="record" data-state="idle">
           <span class="record-ring"></span>
-          <span class="record-label">Talk about your day</span>
+          <span class="record-label">
+            <span data-label="idle">Talk about your day</span>
+            <span data-label="recording">Finish entry</span>
+            <span data-label="busy">Making sense of it…</span>
+          </span>
         </button>
         <p id="record-hint">
           Your camera and voice stay on this machine.

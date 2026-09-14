@@ -7,6 +7,7 @@
  */
 
 import './ui/styles.css';
+import './ui/report.css';
 
 import { checkHealth, warmup, type HealthResponse } from './api';
 import { FaceCapture } from './capture/face';
@@ -46,7 +47,6 @@ async function main(): Promise<void> {
     transcriptPanel: element('transcript-panel'),
     transcriptText: element('transcript-text'),
     recordButton,
-    recordLabel: recordButton.querySelector('.record-label') as HTMLElement,
     recordHint: element('record-hint'),
     brandDot: document.querySelector('.brand-dot') as HTMLElement,
     lifetimeSummary: element('lifetime-summary'),
