@@ -35,7 +35,23 @@ if (-not (Test-Path (Join-Path $root 'frontend\public\models\tiny_face_detector_
 
 # --- backend --------------------------------------------------------------
 
-if (-not $NoBackend) {
+function Test-Endpoint($url, $timeoutSec = 2) {
+    try {
+        Invoke-WebRequest $url -TimeoutSec $timeoutSec -UseBasicParsing | Out-Null
+        return $true
+    } catch { return $false }
+}
+
+# Reuse whatever is already serving rather than starting a second copy. uvicorn
+# does not fall back to another port - it exits with "only one usage of each
+# socket address", which reads like a real failure when it just means the
+# sidecar was already up.
+$backendAlreadyUp = Test-Endpoint 'http://127.0.0.1:8000/api/health'
+
+if (-not $NoBackend -and $backendAlreadyUp) {
+    Write-Host 'Sidecar already running on 8000 - reusing it.' -ForegroundColor DarkGray
+}
+elseif (-not $NoBackend) {
     if (-not (Test-Path $venvPython)) {
         Write-Host "No virtualenv at backend\.venv - see README section 2." -ForegroundColor Red
         Write-Host "Starting the frontend alone; you'll get the face channel only." -ForegroundColor Yellow
@@ -79,6 +95,16 @@ if (-not $NoBackend) {
 # --- frontend -------------------------------------------------------------
 
 Write-Host ''
+
+if (Test-Endpoint 'http://localhost:5173/') {
+    # Vite would quietly move to 5174 and the app would be at an address this
+    # script never printed.
+    Write-Host 'Frontend already running -> http://localhost:5173' -ForegroundColor Green
+    Write-Host 'Nothing else to start. Ctrl+C to leave it running.' -ForegroundColor DarkGray
+    Start-Process 'http://localhost:5173'
+    return
+}
+
 Write-Host 'Mindscape -> http://localhost:5173' -ForegroundColor Green
 Write-Host 'Allow camera and microphone when the browser asks.' -ForegroundColor DarkGray
 Write-Host ''

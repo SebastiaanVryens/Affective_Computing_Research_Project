@@ -82,6 +82,12 @@ body {
   inset: 0;
   z-index: 2;
   display: grid;
+  /* One column, explicitly. The left panel and the transcript both live in row
+     2; without a declared column they'd auto-place side by side in an implicit
+     second column, which pulls the transcript off-centre and shrinks the top
+     bar the moment it appears. They're meant to overlap the same full-width
+     cell and separate themselves with justify-self. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr auto;
   padding: 20px;
   gap: 16px;
@@ -111,6 +117,7 @@ body {
 
 .hud-top {
   grid-row: 1;
+  grid-column: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -185,6 +192,7 @@ button {
 
 .hud-left {
   grid-row: 2;
+  grid-column: 1;
   justify-self: start;
   align-self: center;
   width: 232px;
@@ -283,6 +291,7 @@ button {
 
 .hud-transcript {
   grid-row: 2;
+  grid-column: 1;
   align-self: end;
   justify-self: center;
   max-width: min(680px, 72vw);
@@ -313,6 +322,7 @@ button {
 
 .hud-bottom {
   grid-row: 3;
+  grid-column: 1;
   justify-self: center;
   background: none;
   border: none;
