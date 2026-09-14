@@ -1,0 +1,716 @@
+/*
+ * Overlay chrome for the 3D world.
+ *
+ * Design rule throughout: the world is the content, the UI is a thin pane of
+ * glass on top of it. Nothing here gets a solid background — every surface is a
+ * blurred translucent panel, so the emotional colour of the scene bleeds through
+ * the interface. That's why there are no light-mode tokens: the palette is the
+ * world's, not the page's.
+ */
+
+:root {
+  --ink: #f2f4fb;
+  --ink-dim: #a8b0c8;
+  --ink-faint: #6f7793;
+
+  /* Live mood tint, written each frame by hud.ts. Falls back to transparent so
+     the panels look right before the first reading arrives. */
+  --mood-tint: rgba(0, 0, 0, 0);
+
+  --glass: rgba(16, 19, 32, 0.52);
+  --glass-strong: rgba(12, 14, 24, 0.82);
+  --glass-edge: rgba(255, 255, 255, 0.11);
+
+  --radius: 16px;
+  --radius-sm: 10px;
+
+  --shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #05060c;
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+#world {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+#world canvas {
+  display: block;
+}
+
+/* The video element must stay in the layout tree for face-api to read frames,
+   so it's shrunk to a thumbnail rather than hidden. */
+#camera {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  width: 132px;
+  height: 99px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-edge);
+  /* Mirrored, because an unmirrored self-view is quietly unsettling. */
+  transform: scaleX(-1);
+  opacity: 0.55;
+  z-index: 3;
+  background: #0a0c14;
+  transition: opacity 0.3s ease;
+}
+
+#camera:hover {
+  opacity: 0.95;
+}
+
+#ui {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: 20px;
+  gap: 16px;
+  /* The whole overlay is click-through by default; only actual controls opt
+     back in. Otherwise the invisible grid would eat every orb click. */
+  pointer-events: none;
+}
+
+/* The mood tint is layered over the glass fill rather than replacing it, so
+   panel contrast stays fixed while only the hue drifts.
+
+   Deliberately no transition on `background`: these panels carry a
+   backdrop-filter blur, and animating the background underneath one forces the
+   blur to recomposite every frame. The tint's source is already smoothed in the
+   mood bus, so a CSS transition would only add lag and cost. */
+.hud {
+  pointer-events: auto;
+  background: linear-gradient(var(--mood-tint), var(--mood-tint)), var(--glass);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* --- top bar --- */
+
+.hud-top {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Tinted from JS to the world's lifetime colour — a one-glance summary of
+   everything the diary has accumulated. */
+.brand-dot {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  box-shadow: 0 0 22px currentColor;
+  transition: background 1.2s ease;
+  flex-shrink: 0;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.brand p {
+  margin: 1px 0 0;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
+
+.hud-actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  color: inherit;
+}
+
+.ghost {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-sm);
+  padding: 7px 13px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.ghost:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--ink);
+}
+
+.ghost[aria-pressed='true'] {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--ink);
+}
+
+/* --- live emotion panel --- */
+
+.hud-left {
+  grid-row: 2;
+  justify-self: start;
+  align-self: center;
+  width: 232px;
+  padding: 14px 16px 12px;
+}
+
+.hud-left h2 {
+  margin: 0 0 11px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+#emotion-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.emotion-row {
+  display: grid;
+  grid-template-columns: 62px 1fr 32px;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.emotion-name {
+  color: var(--ink-dim);
+}
+
+.emotion-track {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.emotion-fill {
+  height: 100%;
+  border-radius: 3px;
+  /* Fast enough to feel live, slow enough not to jitter at 8 Hz. */
+  transition: width 0.12s linear;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.emotion-value {
+  text-align: right;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+}
+
+/* The dominant emotion's row brightens rather than the panel reordering —
+   a list that resorts itself while you watch is impossible to read. */
+.emotion-row.is-dominant .emotion-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.panel-foot {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.pill {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink-faint);
+}
+
+.pill-on {
+  background: rgba(107, 191, 74, 0.18);
+  color: #9ee27f;
+}
+
+.pill-off {
+  background: rgba(226, 69, 60, 0.14);
+  color: #ff9c92;
+}
+
+/* --- transcript --- */
+
+.hud-transcript {
+  grid-row: 2;
+  align-self: end;
+  justify-self: center;
+  max-width: min(680px, 72vw);
+  padding: 13px 18px;
+  margin-bottom: 8px;
+}
+
+#transcript-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+  max-height: 5.2em;
+  overflow: hidden;
+  /* Older text fades out at the top instead of scrolling, which would pull
+     focus away from the world. */
+  mask-image: linear-gradient(to bottom, transparent, #000 1.6em);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.6em);
+}
+
+/* Placeholder shown between pressing record and the first words arriving. */
+#transcript-text.is-waiting {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+/* --- record button --- */
+
+.hud-bottom {
+  grid-row: 3;
+  justify-self: center;
+  background: none;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.record {
+  pointer-events: auto;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 26px 13px 18px;
+  border-radius: 999px;
+  background: linear-gradient(var(--mood-tint), var(--mood-tint)), var(--glass-strong);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  transition: transform 0.16s ease, border-color 0.25s ease;
+}
+
+.record:hover {
+  transform: translateY(-1.5px);
+}
+
+.record:disabled {
+  opacity: 0.55;
+  cursor: progress;
+  transform: none;
+}
+
+.record-ring {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #e2453c;
+  box-shadow: 0 0 0 0 rgba(226, 69, 60, 0.55);
+  flex-shrink: 0;
+}
+
+.record.is-recording .record-ring {
+  animation: pulse 1.9s ease-out infinite;
+}
+
+.record.is-recording {
+  border-color: rgba(226, 69, 60, 0.5);
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(226, 69, 60, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 15px rgba(226, 69, 60, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(226, 69, 60, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .record.is-recording .record-ring {
+    animation: none;
+  }
+}
+
+#record-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* --- modal --- */
+
+#modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+#modal-root[hidden] {
+  display: none !important;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 5, 11, 0.68);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.modal {
+  position: relative;
+  width: min(940px, 100%);
+  max-height: min(84vh, 760px);
+  overflow-y: auto;
+  background: var(--glass-strong);
+  backdrop-filter: blur(26px) saturate(1.2);
+  -webkit-backdrop-filter: blur(26px) saturate(1.2);
+  border: 1px solid var(--glass-edge);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  padding: 26px 28px 30px;
+}
+
+.modal-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 19px;
+  line-height: 1;
+  color: var(--ink-dim);
+}
+
+.modal-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--ink);
+}
+
+.modal h2 {
+  margin: 0 0 4px;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.modal .subtitle {
+  margin: 0 0 20px;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+
+/* --- history dots --- */
+
+.granularity {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  margin-bottom: 18px;
+}
+
+.granularity button {
+  padding: 5px 13px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--ink-faint);
+}
+
+.granularity button[aria-pressed='true'] {
+  background: rgba(255, 255, 255, 0.13);
+  color: var(--ink);
+}
+
+.dot-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 22px;
+}
+
+.dot {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  position: relative;
+  transition: transform 0.14s ease;
+  /* conic-gradient background is set inline from emotions.conicGradient() */
+}
+
+.dot:hover,
+.dot:focus-visible {
+  transform: scale(1.22);
+  z-index: 1;
+  outline: none;
+}
+
+.dot.is-empty {
+  background: none !important;
+  border: 1.5px dashed rgba(255, 255, 255, 0.14);
+}
+
+/* A ring marks a day that produced a core memory. */
+.dot.has-core::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+}
+
+.dot-label {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-bottom: 8px;
+}
+
+/* --- entry list --- */
+
+.entry {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  gap: 13px;
+  align-items: start;
+  padding: 13px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.entry-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-top: 4px;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.entry-body h3 {
+  margin: 0 0 3px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.entry-body time {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.entry-quote {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+.entry-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.kw {
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2.5px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.entry-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.entry-actions button {
+  font-size: 11px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.entry-actions button:hover {
+  background: rgba(255, 255, 255, 0.13);
+  color: var(--ink);
+}
+
+.entry-actions .is-core {
+  background: rgba(255, 210, 63, 0.18);
+  color: #ffe082;
+}
+
+/* --- diagnostics --- */
+
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.diag-card {
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.diag-card h4 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.diag-card dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  font-size: 11.5px;
+}
+
+.diag-card dt {
+  color: var(--ink-faint);
+}
+
+.diag-card dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+
+/* --- toast --- */
+
+#toast {
+  position: fixed;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: var(--glass-strong);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--glass-edge);
+  font-size: 12.5px;
+  box-shadow: var(--shadow);
+}
+
+#toast[hidden] {
+  display: none !important;
+}
+
+/* --- narrow screens --- */
+
+@media (max-width: 760px) {
+  #ui {
+    padding: 12px;
+  }
+
+  .hud-left {
+    /* The side panel would cover half the world on a phone; the record button
+       and the world itself matter more. */
+    display: none;
+  }
+
+  .hud-top {
+    padding: 10px 13px;
+  }
+
+  .hud-actions .ghost {
+    padding: 6px 10px;
+    font-size: 11.5px;
+  }
+
+  #camera {
+    width: 84px;
+    height: 63px;
+    bottom: 12px;
+    right: 12px;
+  }
+
+  .modal {
+    padding: 20px 16px 24px;
+  }
+}

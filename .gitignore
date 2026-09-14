@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+dist/
+
+# Face-api weights, copied from node_modules by `npm run fetch-models`
+frontend/public/models/
+
+# MELD data and trained checkpoints — large, and regenerable
+data/meld/
+backend/models/
+backend/checkpoints/
+
+# Local overrides
+.env
+.env.local

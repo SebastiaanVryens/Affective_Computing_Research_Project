@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mindscape — an emotional diary</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <!-- The 3D world sits underneath everything; all UI is overlaid on it. -->
+    <div id="world"></div>
+
+    <!-- Camera feed. Never displayed at size: face-api reads frames from it,
+         and the thumbnail exists only so you can tell you're actually in shot. -->
+    <video id="camera" autoplay muted playsinline></video>
+
+    <main id="ui">
+      <header class="hud hud-top">
+        <div class="brand">
+          <span class="brand-dot"></span>
+          <div>
+            <h1>Mindscape</h1>
+            <p id="lifetime-summary">a world built from how you felt</p>
+          </div>
+        </div>
+
+        <nav class="hud-actions">
+          <button id="btn-history" class="ghost">History</button>
+          <button id="btn-memories" class="ghost">Core memories</button>
+          <button id="btn-diagnostics" class="ghost" title="Model diagnostics">
+            Signals
+          </button>
+        </nav>
+      </header>
+
+      <!-- Live per-emotion readout, updated from the mood bus. -->
+      <aside id="emotion-panel" class="hud hud-left" aria-live="off">
+        <h2>Right now</h2>
+        <ul id="emotion-bars"></ul>
+        <div class="panel-foot">
+          <span id="face-indicator" class="pill pill-off">no face</span>
+          <span id="backend-indicator" class="pill pill-off">offline</span>
+        </div>
+      </aside>
+
+      <section id="transcript-panel" class="hud hud-transcript" hidden>
+        <p id="transcript-text"></p>
+      </section>
+
+      <footer class="hud hud-bottom">
+        <button id="btn-record" class="record">
+          <span class="record-ring"></span>
+          <span class="record-label">Talk about your day</span>
+        </button>
+        <p id="record-hint">
+          Your camera and voice stay on this machine.
+        </p>
+      </footer>
+    </main>
+
+    <!-- Overlays are plain hidden sections, shown by toggling [hidden]. -->
+    <div id="modal-root" hidden>
+      <div class="modal-backdrop"></div>
+      <div class="modal" role="dialog" aria-modal="true">
+        <button class="modal-close" aria-label="Close">×</button>
+        <div id="modal-content"></div>
+      </div>
+    </div>
+
+    <div id="toast" hidden></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

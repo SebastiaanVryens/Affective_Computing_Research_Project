@@ -1,0 +1,22 @@
+# --- server ---
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.9      # multipart/form-data audio uploads
+
+# --- inference ---
+# CPU-only torch by default. For CUDA, install torch from the PyTorch index
+# first (see README), then run this file with --no-deps-conflicts in mind.
+torch>=2.2
+transformers>=4.44
+faster-whisper>=1.0          # pulls in PyAV, which also decodes our WebM uploads
+numpy>=1.24
+soundfile>=0.12              # WAV fallback path only
+
+# --- training (training/train_text.py) ---
+datasets>=2.20
+scikit-learn>=1.4
+pandas>=2.0
+accelerate>=0.33
+
+# --- optional ---
+yake>=0.4.8                  # better keyword phrases; there's a built-in fallback
