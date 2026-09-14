@@ -16,6 +16,7 @@ import {
   intensity,
   zeroVector,
 } from '../emotions';
+import { isThemeworthy } from './stopwords';
 import type { DiaryEntry } from './db';
 
 export type Granularity = 'day' | 'week' | 'month';
@@ -107,6 +108,9 @@ function topKeywords(
   const merged = new Map<string, { text: string; emotion: string; score: number }>();
   for (const entry of entries) {
     for (const keyword of entry.keywords ?? []) {
+      // Same filter the report uses — a bucket summarised by "something" and
+      // "everything" is no more informative here than it is there.
+      if (!isThemeworthy(keyword.text)) continue;
       const key = keyword.text.toLowerCase();
       const existing = merged.get(key);
       if (existing) existing.score += keyword.score;

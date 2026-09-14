@@ -174,20 +174,65 @@ No cloud service sees any of it.
 
 History → **Summary for a doctor (PDF)** asks for a name and a period, then
 produces a printable report: adherence, day-by-day chart, trend direction,
-day-to-day variability, consecutive negative days, time-of-day pattern, verbatim
-quotes from the most marked entries, recurring themes, and which channels the
-summary actually rests on.
+day-to-day variability, within-day swing, consecutive negative days, time-of-day
+pattern, a slope per emotion, anger and disgust as their own tracked dimension,
+positive affect and flatness, recording behaviour over time, verbatim quotes from
+the most marked entries, quoted passages by subject, recurring themes, and which
+channels the summary actually rests on.
 
-Three things about it are deliberate:
+Five things about it are deliberate:
 
 **It computes nothing that resembles a screening score** and flags no risk. A
 false negative from a face model has no business reassuring anyone, and a false
 positive has no business alarming them.
 
-**Every derived figure carries its sample.** A trend needs 7 recorded days and a
-variability figure needs 5 adjacent pairs — below that the report says so rather
-than printing a confident number fitted through four points. Fewer than five
-entries triggers a caution box.
+**The dimensions describe what was expressed, never what it means.** Anger and
+disgust are tracked together — contempt, which is most of what "hostility" means
+clinically, falls between them and MELD has no label for it — but the section is
+titled *expressed*, because the distance between "expressed a lot of anger" and
+"is aggressive" is the distance between a mood diary and a risk assessment. The
+same rule governs the flatness proxies: they are named flatness rather than
+anhedonia, since anhedonia is about anticipated pleasure and this data cannot
+reach it. Each slope is also fitted per emotion, because fear rising while
+sadness falls nets out in the aggregate to "broadly flat" — true about the
+average, misleading about the person.
+
+**Subjects are surfaced by quoting, never by scoring.** `state/lexicon.ts` matches
+a table of phrases — self-harm, hopelessness, anger, panic, substances, sleep,
+isolation, functioning — against the transcripts, and every hit is rendered as
+the sentence it appeared in with the matched words marked. There is no score, no
+severity, no risk level, and no aggregate across categories, because nothing in
+a word list resolves negation, idiom, tense, or someone else's story: "we watched
+a film about suicide prevention" matches, and the only design that survives being
+wrong about it is one where the reader sees the sentence. Categories with no hits
+are omitted rather than printed as "none found" — "none found" reads as
+reassurance, and matching cannot support that. Adding a dimension is one entry in
+`CATEGORIES`. When self-harm or hopelessness language is present, the export
+screen says so before the document is generated and offers crisis resources — the
+person handing this to someone should know what it quotes back.
+
+**Every derived figure carries its sample.** A trend needs 7 recorded days, a
+variability figure needs 5 adjacent pairs, within-day range needs 3 days with
+more than one entry, and a change in recording behaviour needs 3 weeks — below
+that the report says so rather than printing a confident number fitted through
+four points. Fewer than five entries triggers a caution box. The flatness
+thresholds have no validated basis, so they are printed in the section that uses
+them rather than buried: a reader who would have drawn the line elsewhere can
+only discount the figure if they can see where it was drawn.
+
+**Themes are filtered twice, because keywords are stored.** The backend has two
+keyword extractors and they are not equally good: YAKE filters statistically and
+never lets "something" or "expected" through, while the built-in RAKE-style
+fallback ranks by phrase length and repetition alone. With no notion of how
+*ordinary* a word is, the fallback floats the words a person says in every entry
+straight to the top of a table labelled "recurring themes" — they recur, but they
+are not themes. `keywords.py`'s stoplist now covers that closed class
+(indefinite pronouns, light and mental verbs, generic nouns of time and
+quantity), and `state/stopwords.ts` applies the same rule again at display time,
+since keywords are extracted once and stored in the entry — no backend change
+reaches a diary already recorded. Both keep out anything a diary is plausibly
+*about*: "alone", "tired", "sleep", "money", "night", "stress". Over-filtering
+silently deletes the one word that mattered, which is the worse failure.
 
 **Provenance is a section, not a footnote.** If 80% of entries had the camera off,
 the summary is a summary of *words*, and the reader can see that instead of
@@ -557,6 +602,9 @@ frontend/src/
   state/
     db.ts              IndexedDB, export/import
     history.ts         day/week/month rollups
+    report.ts          the clinician summary's numbers, each with its sample
+    lexicon.ts         phrase table per subject — quotes hits, scores nothing
+    stopwords.ts       display-time theme filter, mirrors keywords.py's stoplist
   ui/                  HUD and overlay views
 
 backend/app/

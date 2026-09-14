@@ -15,7 +15,7 @@ import {
   type EmotionVector,
 } from '../emotions';
 import type { HealthResponse } from '../api';
-import { type Period } from '../state/report';
+import { type Period, hasSupportLanguage } from '../state/report';
 import { generateReport } from './report';
 import {
   type Bucket,
@@ -524,6 +524,8 @@ export class Modals {
       )
     );
 
+    if (hasSupportLanguage(entries)) content.append(buildSupportNotice());
+
     const field = document.createElement('label');
     field.style.cssText = 'display:block;margin:0 0 18px;';
     field.append(
@@ -599,6 +601,65 @@ export class Modals {
 
     input.focus();
   }
+}
+
+/**
+ * Shown on the export screen when the diary contains language about self-harm
+ * or hopelessness.
+ *
+ * Two jobs, and the first is the one that is easy to forget. This document is
+ * about to be handed to another person, and it will quote those passages back —
+ * so the person exporting it should know that before they print it, not after
+ * someone else has read it. The print preview lets them see exactly what it
+ * says and stop if they want to.
+ *
+ * The second job is the resources. They are offered rather than insisted on,
+ * without a diagnosis attached and without implying the app has concluded
+ * anything: it matched some words, which is all it can do, and someone who is
+ * fine loses two seconds reading this.
+ */
+function buildSupportNotice(): HTMLElement {
+  const box = document.createElement('section');
+  box.style.cssText =
+    'margin:0 0 20px;padding:14px 16px;border-radius:12px;' +
+    'background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.14);';
+
+  const title = document.createElement('p');
+  title.style.cssText =
+    'margin:0 0 8px;font-size:13px;font-weight:600;color:#f2f4fb;';
+  title.textContent = 'Before you share this';
+  box.append(title);
+
+  for (const text of [
+    'Some of your entries use words about self-harm or hopelessness. The report ' +
+      'includes those passages, quoted as you said them, so that whoever reads ' +
+      'it sees your words rather than a score. Nothing is rated or scored.',
+    'The print preview shows the whole document before you save it — worth a ' +
+      'look if you want to know exactly what it says first.',
+    'If any of it is true right now, these people are there for it:',
+  ]) {
+    const line = document.createElement('p');
+    line.style.cssText =
+      'margin:0 0 8px;font-size:12.5px;line-height:1.5;color:#c6cce0;';
+    line.textContent = text;
+    box.append(line);
+  }
+
+  const list = document.createElement('ul');
+  list.style.cssText =
+    'margin:0;padding-left:18px;font-size:12.5px;line-height:1.6;color:#c6cce0;';
+  for (const text of [
+    'Finland — Kriisipuhelin (MIELI), 09 2525 0111',
+    'Emergency, anywhere in the EU — 112',
+    'Anywhere else — findahelpline.com lists services by country',
+  ]) {
+    const item = document.createElement('li');
+    item.textContent = text;
+    list.append(item);
+  }
+  box.append(list);
+
+  return box;
 }
 
 // ---------------------------------------------------------------------------

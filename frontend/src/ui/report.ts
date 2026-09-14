@@ -15,12 +15,22 @@ import { PALETTE, type Emotion, type EmotionVector, EMOTIONS } from '../emotions
 import {
   type ClinicalReport,
   type DaySummary,
+  type EngagementSummary,
+  type LanguageFlagGroup,
   type Period,
+  FLAT_CHARGE_THRESHOLD,
+  LOW_JOY_THRESHOLD,
   NEGATIVE,
   buildReport,
+  describeEmotionTrend,
+  describeEngagement,
+  describeFlatness,
+  describeHostility,
   describeTrend,
   describeVariability,
+  describeWithinDay,
 } from '../state/report';
+import type { LexiconMatch } from '../state/lexicon';
 import type { DiaryEntry } from '../state/db';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -54,12 +64,16 @@ export function generateReport(
   host.id = 'print-report';
   host.append(
     buildHeader(report),
-    buildNotice(),
+    buildNotice(report),
     buildAtAGlance(report),
     buildProfile(report),
     buildTimeline(report),
     buildPatterns(report),
+    buildHostility(report),
+    buildFlatness(report),
+    buildEngagement(report),
     buildVoices(report),
+    ...buildLanguageSections(report),
     buildThemes(report),
     buildProvenance(report),
     buildMethod()
@@ -128,7 +142,7 @@ function buildHeader(r: ClinicalReport): HTMLElement {
  * clinical use. Saying so plainly is the difference between a useful adjunct and
  * a misleading one.
  */
-function buildNotice(): HTMLElement {
+function buildNotice(r: ClinicalReport): HTMLElement {
   const box = el('section', 'rp-notice');
   box.append(
     el('h2', 'rp-notice-title', 'What this document is'),
@@ -155,6 +169,26 @@ function buildNotice(): HTMLElement {
         'any figure here.'
     )
   );
+
+  // A pointer rather than a summary. Someone who reads only the first page
+  // should learn that these sections exist and that they are quotations — but
+  // putting the quotes themselves up here would lead the document with its
+  // most alarming content, out of the context that makes it readable.
+  const support = r.languageFlags.filter((g) => g.offersSupport);
+  if (support.length > 0) {
+    box.append(
+      el(
+        'p',
+        'rp-notice-pointer',
+        'This report contains sections quoting the author’s own words on ' +
+          `${listOf(support.map((g) => g.label.replace(/^Language about /, '')))}. ` +
+          'Those sections are quotations found by matching words, not an ' +
+          'assessment — nothing in this document estimates risk, and the absence ' +
+          'of a section is not evidence that a subject was never on the ' +
+          'author’s mind.'
+      )
+    );
+  }
   return box;
 }
 
@@ -244,6 +278,7 @@ function buildPatterns(r: ClinicalReport): HTMLElement {
   const list = el('dl', 'rp-findings');
   addFinding(list, 'Direction', describeTrend(r.valenceTrendPerWeek));
   addFinding(list, 'Variability', describeVariability(r.variability));
+  addFinding(list, 'Within a day', describeWithinDay(r.withinDay));
   addFinding(
     list,
     'Consecutive negative days',
@@ -254,6 +289,40 @@ function buildPatterns(r: ClinicalReport): HTMLElement {
         } with negative dominant affect.`
   );
   section.append(list);
+
+  // Per-emotion slopes. The aggregate figure above can only move if the net
+  // moves, so an emotion rising while another falls reads there as "flat".
+  const moving = r.emotionTrends.filter((t) => t.share >= 0.02);
+  if (moving.length > 0) {
+    section.append(
+      el('h3', 'rp-subhead', 'Each emotion separately'),
+      el(
+        'p',
+        'rp-lead',
+        'The direction figure above is a net, so two emotions moving opposite ways ' +
+          'cancel in it. These are the same slope fitted to each emotion on its ' +
+          'own. "Rising" and "falling" describe the numbers, not whether things ' +
+          'are getting better.'
+      )
+    );
+
+    const table = el('table', 'rp-table');
+    table.innerHTML =
+      '<thead><tr><th>Emotion</th><th>Share</th><th>Direction</th></tr></thead>';
+    const body = el('tbody');
+    for (const trend of moving) {
+      const row = el('tr');
+      const nameCell = el('td');
+      nameCell.append(
+        swatch(PALETTE[trend.emotion].base),
+        document.createTextNode(' ' + PALETTE[trend.emotion].label)
+      );
+      row.append(nameCell, el('td', '', pct(trend.share)), el('td', '', describeEmotionTrend(trend.perWeek)));
+      body.append(row);
+    }
+    table.append(body);
+    section.append(table);
+  }
 
   const withEntries = r.timeOfDay.filter((b) => b.entryCount > 0);
   if (withEntries.length > 1) {
@@ -282,6 +351,196 @@ function buildPatterns(r: ClinicalReport): HTMLElement {
       )
     );
   }
+  return section;
+}
+
+/**
+ * Anger and disgust as their own tracked dimension.
+ *
+ * The heading says "expressed", and the framing paragraph says what this is
+ * not, because the gap between "this person expressed a lot of anger" and "this
+ * person is aggressive" is the entire distance between a mood diary and a risk
+ * assessment. The data supports the first and says nothing about the second.
+ */
+function buildHostility(r: ClinicalReport): HTMLElement {
+  const section = sectionWith('Anger and disgust expressed');
+  const h = r.hostility;
+
+  section.append(
+    el('p', 'rp-lead', describeHostility(h)),
+    el(
+      'p',
+      'rp-note',
+      'Anger and disgust are counted together because contempt — which is most ' +
+        'of what is usually meant by hostility — falls between them and has no ' +
+        'label of its own in this scheme. This describes emotion that was ' +
+        'expressed while recording. It is not a measure of behaviour towards ' +
+        'anyone and carries no implication about what the author did or might do.'
+    )
+  );
+
+  if (h.peakDay && h.share > 0) {
+    const list = el('dl', 'rp-findings');
+    addFinding(
+      list,
+      'Highest day',
+      `${formatDate(h.peakDay.date)} — ${pct(h.peakDay.share)} of that day's affect.`
+    );
+    addFinding(
+      list,
+      'Direction',
+      h.perWeek === null
+        ? 'Not enough days recorded to fit a trend.'
+        : Math.abs(h.perWeek) < 0.01
+          ? 'Broadly steady across the period.'
+          : `${h.perWeek > 0 ? 'Rising' : 'Falling'} by ${Math.abs(h.perWeek * 100).toFixed(
+              1
+            )} points per week.`
+    );
+    section.append(list);
+  }
+
+  if (h.themes.length > 0) {
+    section.append(
+      el('h3', 'rp-subhead', 'What was being talked about on those days'),
+      el(
+        'p',
+        'rp-note',
+        'Keywords from entries recorded on days where anger or disgust dominated. ' +
+          'Co-occurrence only — these are subjects that came up, not causes.'
+      ),
+      keywordRow(h.themes)
+    );
+  }
+
+  return section;
+}
+
+/**
+ * The flatness proxies.
+ *
+ * Every threshold is printed in the section that uses it. They are judgement
+ * calls with no validated basis, and a reader who would have drawn the line
+ * elsewhere can only discount the figure if they can see where it was drawn.
+ */
+function buildFlatness(r: ClinicalReport): HTMLElement {
+  const section = sectionWith('Positive affect and flatness');
+
+  section.append(
+    el('p', 'rp-lead', describeFlatness(r.flatness, r.daysCovered)),
+    el(
+      'p',
+      'rp-note',
+      'Two different things are counted here. Little joy is one; little emotion ' +
+        'of any kind — a reading close to neutral whatever the subject — is the ' +
+        'other, and it is the one a diary is unusually good at showing. ' +
+        `A day counts as flat below ${FLAT_CHARGE_THRESHOLD.toFixed(2)} emotional ` +
+        `charge, and as low-joy below ${LOW_JOY_THRESHOLD.toFixed(2)}. Both ` +
+        'thresholds are judgement calls, not validated cut-offs.'
+    )
+  );
+
+  const list = el('dl', 'rp-findings');
+  addFinding(
+    list,
+    'Joy over time',
+    r.flatness.joyPerWeek === null
+      ? 'Not enough days recorded to fit a trend.'
+      : Math.abs(r.flatness.joyPerWeek) < 0.01
+        ? 'Broadly steady across the period.'
+        : `${r.flatness.joyPerWeek > 0 ? 'Rising' : 'Falling'} by ${Math.abs(
+            r.flatness.joyPerWeek * 100
+          ).toFixed(1)} points per week.`
+  );
+  addFinding(
+    list,
+    'Emotional charge',
+    `Averaged ${r.flatness.meanCharge.toFixed(2)} per recorded day, where 0 is ` +
+      'entirely neutral and 1 is entirely non-neutral.'
+  );
+  section.append(list);
+
+  return section;
+}
+
+/**
+ * Recording behaviour over time.
+ *
+ * Kept strictly descriptive. Someone recording less often may be disengaging,
+ * or may be busy, or may simply be better — and a document that guessed between
+ * those would be inventing the most consequential sentence in it.
+ */
+function buildEngagement(r: ClinicalReport): HTMLElement {
+  const section = sectionWith('Recording behaviour');
+  if (r.engagement.weeks.length === 0) {
+    section.append(el('p', '', 'No entries in this period.'));
+    return section;
+  }
+
+  section.append(
+    el('p', 'rp-lead', describeEngagement(r.engagement)),
+    engagementChart(r.engagement),
+    el(
+      'p',
+      'rp-note',
+      'Bars are entries per week; weeks with none are shown as gaps rather than ' +
+        'skipped. How often someone records is not a measure of how they are — ' +
+        'people stop for every reason, including getting better — but a change ' +
+        'in it is context for everything above.'
+    )
+  );
+  return section;
+}
+
+/**
+ * One section per matched lexicon category.
+ *
+ * Each is a list of dated quotations and nothing else. There is no count of
+ * severity, no trend line, and no summary sentence interpreting them, because
+ * every one of those would be an inference the matching cannot support. The
+ * matched words are marked so a reader can see in a glance which hits are
+ * idiom, negation, or someone else's story, and discard them.
+ */
+function buildLanguageSections(r: ClinicalReport): HTMLElement[] {
+  return r.languageFlags.map((group) => buildLanguageSection(group));
+}
+
+function buildLanguageSection(group: LanguageFlagGroup): HTMLElement {
+  const section = sectionWith(group.label);
+  if (group.offersSupport) section.classList.add('rp-section-marked');
+
+  const span =
+    group.dayCount === 1
+      ? `on one day (${formatDate(group.firstSeen)})`
+      : `across ${group.dayCount} days, between ${formatDate(group.firstSeen)} and ${formatDate(
+          group.lastSeen
+        )}`;
+
+  section.append(
+    el(
+      'p',
+      'rp-lead',
+      `Found in ${group.entryCount} ${group.entryCount === 1 ? 'entry' : 'entries'} ${span}.`
+    ),
+    el('p', 'rp-note', group.blurb)
+  );
+
+  for (const excerpt of group.excerpts) {
+    section.append(markedQuote(excerpt.date, excerpt.emotion, excerpt.match));
+  }
+
+  if (group.omitted > 0) {
+    section.append(
+      el(
+        'p',
+        'rp-note',
+        `${group.omitted} further ${
+          group.omitted === 1 ? 'passage' : 'passages'
+        } matched this category and are not shown here.`
+      )
+    );
+  }
+
   return section;
 }
 
@@ -429,6 +688,21 @@ function buildMethod(): HTMLElement {
       'generally.',
     'Percentages are weighted by how confident each reading was, so they will not ' +
       'match a simple count of entries.',
+    'Trend lines are least-squares fits against elapsed days, reported only where ' +
+      'at least seven days were recorded, and shown per emotion as well as in ' +
+      'aggregate because opposite movements cancel in the aggregate.',
+    'Sections quoting language about a subject are produced by matching a fixed ' +
+      'list of words and phrases against the transcripts. Matching does not ' +
+      'interpret: it cannot tell a statement from a denial, a memory, a joke, a ' +
+      'song lyric, or an account of somebody else, which is why those sections ' +
+      'print the sentence rather than a count or a score.',
+    'That word list is not exhaustive and was not validated against anything. An ' +
+      'absent section means no listed phrase was matched in a transcript — it is ' +
+      'not evidence that a subject was absent from the author’s mind, and it ' +
+      'should never be read as reassurance. Transcription errors alone are enough ' +
+      'to lose a match.',
+    'Nothing in this document estimates risk, and no section of it should be used ' +
+      'in place of asking the person directly.',
   ]) {
     list.append(el('li', '', text));
   }
@@ -511,6 +785,85 @@ function valenceChart(days: DaySummary[]): SVGElement {
   return svg;
 }
 
+/**
+ * Entries per week, including the empty ones.
+ *
+ * Plotted against week index with every intervening week present, so a month of
+ * silence is a month of empty slots rather than two adjacent bars.
+ */
+function engagementChart(engagement: EngagementSummary): SVGElement {
+  const width = 720;
+  const height = 96;
+  const floor = height - 16;
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('class', 'rp-chart');
+
+  const weeks = engagement.weeks;
+  const peak = Math.max(1, ...weeks.map((w) => w.entries));
+  const slot = width / weeks.length;
+  const barWidth = Math.max(2, Math.min(24, slot * 0.7));
+
+  const axis = document.createElementNS(SVG_NS, 'line');
+  axis.setAttribute('x1', '0');
+  axis.setAttribute('x2', String(width));
+  axis.setAttribute('y1', String(floor));
+  axis.setAttribute('y2', String(floor));
+  axis.setAttribute('class', 'rp-axis');
+  svg.append(axis);
+
+  weeks.forEach((week, i) => {
+    if (week.entries === 0) return;
+    const barHeight = (week.entries / peak) * (floor - 10);
+    const bar = document.createElementNS(SVG_NS, 'rect');
+    bar.setAttribute('x', String(i * slot + (slot - barWidth) / 2));
+    bar.setAttribute('y', String(floor - barHeight));
+    bar.setAttribute('width', String(barWidth));
+    bar.setAttribute('height', String(barHeight));
+    bar.setAttribute('fill', '#5c6270');
+    bar.setAttribute('rx', '1.5');
+    svg.append(bar);
+  });
+
+  // Only the ends are labelled: a tick per week is unreadable over a long
+  // period, and the two dates are what place the shape in time.
+  for (const [index, anchor] of [
+    [0, 'start'],
+    [weeks.length - 1, 'end'],
+  ] as const) {
+    const label = document.createElementNS(SVG_NS, 'text');
+    label.setAttribute('x', String(index === 0 ? 0 : width));
+    label.setAttribute('y', String(height - 2));
+    label.setAttribute('text-anchor', anchor);
+    label.setAttribute('class', 'rp-chart-label');
+    label.textContent = formatDate(weeks[index].weekStart);
+    svg.append(label);
+  }
+
+  const scale = document.createElementNS(SVG_NS, 'text');
+  scale.setAttribute('x', '0');
+  scale.setAttribute('y', '9');
+  scale.setAttribute('class', 'rp-chart-label');
+  scale.textContent = `peak ${peak} ${peak === 1 ? 'entry' : 'entries'}/week`;
+  svg.append(scale);
+
+  return svg;
+}
+
+function keywordRow(themes: Array<{ text: string; count: number }>): HTMLElement {
+  const row = el('div', 'rp-chips');
+  for (const theme of themes) {
+    const chip = el('span', 'rp-chip');
+    chip.append(
+      document.createTextNode(theme.text),
+      el('span', 'rp-chip-count', `×${theme.count}`)
+    );
+    row.append(chip);
+  }
+  return row;
+}
+
 function legendFor(days: DaySummary[]): HTMLElement {
   const present = new Set(days.map((d) => d.dominant));
   const legend = el('div', 'rp-legend');
@@ -577,6 +930,46 @@ function quoteBlock(date: Date, emotion: Emotion, quote: string): HTMLElement {
     el('p', 'rp-quote-meta', `${formatDate(date)} · read as ${PALETTE[emotion].label}`)
   );
   return block;
+}
+
+/**
+ * A quotation with the matched term marked.
+ *
+ * Built from text nodes rather than innerHTML — this is the one place in the
+ * report where the content is a raw transcript with an offset into it, and
+ * assembling that as markup would put user text through an HTML parser for no
+ * reason. The marking is what lets a reader dismiss a false positive without
+ * reading the whole passage twice.
+ */
+function markedQuote(date: Date, emotion: Emotion, match: LexiconMatch): HTMLElement {
+  const block = el('blockquote', 'rp-quote rp-quote-marked');
+  block.style.borderLeftColor = PALETTE[emotion].base;
+
+  const text = el('p', 'rp-quote-text');
+  const { start, end } = match.highlight;
+  const mark = el('mark', 'rp-mark', match.quote.slice(start, end));
+
+  text.append(
+    document.createTextNode('“' + match.quote.slice(0, start)),
+    mark,
+    document.createTextNode(match.quote.slice(end) + '”')
+  );
+
+  block.append(
+    text,
+    el(
+      'p',
+      'rp-quote-meta',
+      `${formatDate(date)} · entry read as ${PALETTE[emotion].label} · matched “${match.term}”`
+    )
+  );
+  return block;
+}
+
+/** "a, b and c" — used in the notice's pointer to the quoted sections. */
+function listOf(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
 function swatch(color: string): HTMLElement {

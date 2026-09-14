@@ -25,6 +25,24 @@ log = logging.getLogger(__name__)
 # Function words plus the filler that dominates spoken diary entries. Anything
 # here can still appear *inside* a multi-word phrase, it just can't be a keyword
 # on its own.
+#
+# This list does more work than a stoplist usually does, because of where it
+# sits. YAKE, when installed, filters statistically and never lets "something"
+# or "expected" through. The built-in extractor below has no such notion — it
+# ranks by phrase length and repetition, so *any* word not listed here can reach
+# the top of a list the UI labels "recurring themes" purely by being said often.
+# The words a person uses in every entry are the ones that benefit most. They
+# recur; they are not themes. Hence the indefinite pronouns, the light and mental
+# verbs, and the generic nouns of time and quantity below.
+#
+# Mirrored in frontend/src/state/stopwords.ts, which filters the same class at
+# display time — keywords are stored per entry, so a diary recorded before this
+# list was widened still carries the old results and only the front end can
+# reach them.
+#
+# Kept out on purpose: "alone", "tired", "sleep", "money", "night", "stress" and
+# anything else a diary is plausibly *about*. Over-filtering silently deletes
+# the one word that mattered, which is a worse failure than a little noise.
 STOPWORDS = frozenset(
     """
 a about above after again against all am an and any are aren't as at be because been
@@ -40,6 +58,32 @@ also get got go going going-to would-be really quite maybe kind sort lot bit thi
 things stuff okay ok yeah yep nope uh um erm hmm like actually basically literally
 today tomorrow yesterday day days week month year time
 i'm i've i'd i'll you're you've we're we've they're it's that's there's
+
+something anything nothing everything someone somebody anyone anybody everyone
+everybody nobody none everywhere anywhere somewhere nowhere
+
+think thinks thinking thought thoughts feel feels feeling feelings felt know knows
+knowing knew want wants wanted need needs needed seem seems seemed look looks looked
+looking make makes made making say says said saying tell tells told telling goes gone
+come comes coming came take takes taking took taken give gives giving gave gets
+getting put puts putting keep keeps keeping kept try tries trying tried use uses using
+used happen happens happening happened start starts starting started stop stops
+stopping stopped spend spends spending spent expect expects expecting expected guess
+guessed suppose supposed wonder wondered mean means meant
+
+ways lots parts point points moment moments morning afternoon evening tonight hour
+hours minute minutes weeks months years type
+
+perhaps pretty many less least enough almost nearly even still ever never always
+properly exactly completely absolutely entirely somehow ordinary person people
+sometimes often usually already anyway though although since without around back away
+whatever honestly obviously apparently
+
+good bad better worse best worst fine nice great big small long longer short hard easy
+new old different whole real sure right wrong able weird strange
+
+will shall may might must let lets gonna wanna gotta well yes
+whether else instead afterwards anymore
 """.split()
 )
 

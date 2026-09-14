@@ -100,6 +100,17 @@
     margin-bottom: 0;
   }
 
+  /* The pointer to the quoted-language sections. Ruled off rather than
+     coloured or boxed — it needs to be findable by someone skimming the first
+     page, without being styled like an alarm. */
+
+  .rp-notice-pointer {
+    margin-top: 7pt !important;
+    padding-top: 6pt;
+    border-top: 0.5pt solid #c8ccd4;
+    font-weight: 500;
+  }
+
   /* --- sections --- */
 
   .rp-section {
@@ -333,6 +344,63 @@
     font-size: 9pt;
     font-style: italic;
     color: #3b404b;
+  }
+
+  /* --- quoted-language sections --- */
+
+  /* A rule down the left of the whole section, so the pages carrying quoted
+     language are identifiable in a printed stack without being shouted. No
+     colour, no box: this is a finding aid, not a warning label. */
+
+  .rp-section-marked {
+    border-left: 1.5pt solid #16181d;
+    padding-left: 10pt;
+    /* These sections can run to ten quotations, which is taller than a page.
+       Sections elsewhere ask not to be split; this one must be allowed to,
+       or the whole block gets pushed to a fresh page and still overflows.
+       The individual quotes keep their own avoid, so nothing splits mid-quote. */
+    break-inside: auto;
+  }
+
+  /* Quotes here are the content of their section rather than illustrations
+     within one, so they lose the extra left rule and sit flush. */
+
+  .rp-quote-marked {
+    border-left-width: 1.5pt;
+    padding-left: 8pt;
+  }
+
+  .rp-mark {
+    background: #eaecf0;
+    color: inherit;
+    padding: 0 1pt;
+    font-weight: 600;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* --- keyword chips --- */
+
+  .rp-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4pt;
+  }
+
+  .rp-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3pt;
+    padding: 2pt 6pt;
+    border: 0.5pt solid #c8ccd4;
+    border-radius: 9pt;
+    font-size: 9pt;
+  }
+
+  .rp-chip-count {
+    color: #5c6270;
+    font-size: 8pt;
+    font-variant-numeric: tabular-nums;
   }
 
   /* --- method list --- */
