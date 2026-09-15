@@ -20,12 +20,15 @@ import * as THREE from 'three';
 import { PALETTE, type EmotionVector, charge } from '../emotions';
 import type { DiaryEntry } from '../state/db';
 import { chooseBiome, type BiomeChoice } from './biomes';
+import { GroundCover } from './groundcover';
 import { Horizon } from './horizon';
+import { LAYER } from './layers';
 import type { ThreadAnchor } from './threads';
 import { MAX_MOTIFS, detectMotifs, type MotifPresence } from './motifs';
 import { PropFactory, hashString, makeRng, type Rng } from './props';
 import { Room } from './room';
 import type { ViewKind } from './view';
+import { Well } from './well';
 import {
   ISLAND_RADIUS,
   Terrain,
@@ -94,6 +97,8 @@ export class Mindscape {
 
   private terrain = new Terrain();
   private horizon = new Horizon();
+  private cover = new GroundCover();
+  private well = new Well();
   private room = new Room();
   private props = new PropFactory();
   private propGroup = new THREE.Group();
@@ -116,6 +121,8 @@ export class Mindscape {
     this.island.add(
       this.terrain.group,
       this.horizon.group,
+      this.cover.group,
+      this.well.group,
       this.room.group,
       this.propGroup,
       this.beaconGroup
@@ -157,7 +164,9 @@ export class Mindscape {
     this.place = chooseBiome(this.motifs);
     this.restlessness = restlessnessOf(entries);
     const shape = shapeFor(entries, this.motifs, this.place);
-    const highGround = this.motifs.find((m) => m.motif.id === 'mountains')?.share ?? 0;
+    const shareOf = (id: string): number =>
+      this.motifs.find((m) => m.motif.id === id)?.share ?? 0;
+    const highGround = shareOf('mountains');
 
     this.terrain.rebuild(shape, lifetimeTotals);
 
@@ -165,15 +174,36 @@ export class Mindscape {
       // Indoors replaces the landscape rather than sitting on it: no ground, no
       // sea, no distance. The well stays, because a hole in the floor of the
       // room you live in is a better image than a hole in a hillside.
-      this.horizon.dispose();
+      this.horizon.clear();
+      this.cover.clear();
       this.room.rebuild(lifetimeTotals, viewKindFor(this.motifs), this.haze, shape.seed);
     } else {
       this.room.clear();
       // The far range answers to the same theme the island's outcrops do, so
       // talking about climbing raises the whole world rather than adding rocks
-      // to one lawn.
-      this.horizon.rebuild(shape, Math.min(1, highGround * 2.2), lifetimeTotals);
+      // to one lawn. The same for the woods: the trees on the far hills are the
+      // same fact as the trees on the island, seen from further away.
+      this.horizon.rebuild(
+        shape,
+        Math.min(1, highGround * 2.2),
+        lifetimeTotals,
+        Math.min(1, shareOf('forest') * 2.4)
+      );
+      this.cover.rebuild(shape, this.motifs, (x, z) =>
+        Math.hypot(x, z) < ISLAND_RADIUS ? this.terrain.heightAt(x, z) : this.horizon.heightAt(x, z)
+      );
     }
+
+    // The well belongs to every biome, indoors included — a hole in the floor of
+    // the room you live in is as much a way down as a hole in a hillside. Its
+    // rim is sampled just outside the ground's inner edge so the shaft hangs
+    // from whatever height the landform actually put there.
+    this.well.rebuild(
+      this.terrain.heightAt(WELL_RADIUS + 0.06, 0),
+      shape.biome.ground.rock,
+      lifetimeTotals,
+      shape.biome.id === 'room' ? 'square' : 'round'
+    );
 
     this.buildProps(shape);
     this.buildBeacons(entries.filter((e) => e.isCoreMemory), shape);
@@ -361,6 +391,11 @@ export class Mindscape {
         color: glow.clone(),
       });
 
+      // In front of the sea, always. These are additive and write no depth, so
+      // without an explicit order the water is drawn over them and a core memory
+      // standing against the sea is simply erased — see ./layers.ts.
+      for (const part of [beam, orb, ring, proxy]) part.renderOrder = LAYER.glow;
+
       this.beacons.push({ mesh: orb, material: cap, phase: i * 0.7 });
       this.beacons.push({ mesh: ring, material: column, phase: i * 0.7 + 1.1 });
       this.pickProxies.push(proxy);
@@ -383,6 +418,8 @@ export class Mindscape {
   ): void {
     this.haze.copy(sky);
     this.terrain.update(delta, elapsed, mood, sky);
+    this.cover.update(elapsed, mood.arousal);
+    this.well.update(elapsed);
     this.room.update(elapsed);
 
     for (const f of this.floaters) {
@@ -498,6 +535,8 @@ export class Mindscape {
     this.clearBeacons();
     this.terrain.dispose();
     this.horizon.dispose();
+    this.cover.dispose();
+    this.well.dispose();
     this.room.dispose();
     this.props.dispose();
     for (const material of this.ownedMaterials) material.dispose();

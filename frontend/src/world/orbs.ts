@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import { PALETTE, type Emotion } from '../emotions';
 import type { DiaryEntry } from '../state/db';
+import { LAYER } from './layers';
 import { spiralPlacement } from './placement';
 
 const CORE_RING_RADIUS = 6.2;
@@ -318,6 +319,10 @@ export class LiveOrb {
     this.mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(1.35, 5), this.material);
     this.mesh.position.set(0, 1.2, 0);
     this.mesh.visible = false;
+    // Transparent, and it hangs over the well on the mind floor with the sea
+    // behind it — so it has to be ordered in front of the water explicitly, the
+    // same as everything else made of light. See ./layers.ts.
+    this.mesh.renderOrder = LAYER.glow;
   }
 
   setActive(active: boolean): void {

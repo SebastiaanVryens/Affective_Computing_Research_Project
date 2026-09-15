@@ -13,6 +13,7 @@
 
 import * as THREE from 'three';
 import { PALETTE, type Emotion } from '../emotions';
+import { LAYER } from './layers';
 
 /** Device-pixel scale for the label canvases. 2 is crisp without being wasteful. */
 const TEXTURE_SCALE = 2;
@@ -74,6 +75,10 @@ export class KeywordField {
     });
 
     const sprite = new THREE.Sprite(material);
+    // The words hover over the mouth of the well on the mind floor, which on a
+    // coast puts the sea directly behind them. Additive and depth-writeless, so
+    // they need saying explicitly or the water covers them — see ./layers.ts.
+    sprite.renderOrder = LAYER.glow;
     const baseScale = 1.1 + weight * 1.3;
     sprite.scale.set(baseScale * aspect, baseScale, 1);
 
