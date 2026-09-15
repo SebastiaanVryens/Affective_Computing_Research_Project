@@ -41,6 +41,7 @@ import {
   gradientPalette,
   groundColorAt,
   makeGroundMaterial,
+  seaIsland,
   type TerrainShape,
 } from './terrain';
 
@@ -384,9 +385,13 @@ function backdrop(
   // the seaward side of a coast, level with the ground anywhere inland.
   const inland = 1 + (fbm(x * 0.02, z * 0.02, shape.seed + 5) * 2 - 1) * 3.2 * clearance;
   const plain =
-    shape.biome.edge === 'shore'
+    (shape.biome.edge === 'shore'
       ? ((shape.waterLevel ?? 0) - 9) * (1 - landward) + (inland + 1.2) * landward
-      : inland - shape.biome.tilt * clamp(alongGrain(x, z, shape), -2.6, 2.6) * 0.6;
+      : inland - shape.biome.tilt * clamp(alongGrain(x, z, shape), -2.6, 2.6) * 0.6) +
+    // The island offshore. Added here as well as in `elevation`, because past
+    // the blend band this mesh stops consulting that function entirely while
+    // the sea never stops — see the note on seaIsland in terrain.ts.
+    seaIsland(x, z, shape);
 
   // Two scales of undulation rather than one.
   //

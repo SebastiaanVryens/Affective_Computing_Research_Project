@@ -72,6 +72,41 @@ export const MOTIF_MODELS: Partial<Record<string, string | ModelSpec>> = {
   home: { url: '/props/house.glb', height: 3.2, tint: 0.28 },
   music: { url: '/props/speaker.glb', height: 2.0, tint: 0.3 },
 
+  // The wider world, fetched by landmarks.ts. Namespaced like the room's
+  // furniture, and for the same reason: these are asked for by name, not by
+  // motif, so they must never be able to collide with a motif id.
+  //
+  // Heights are the *authored* size in world units; landmarks.ts carries the
+  // same number in its register so placement can reason about how tall a thing
+  // is without loading it. Keep the two in step.
+  //
+  // The tint is deliberately lighter than the props'. A landmark is scenery the
+  // diary has earned rather than a statement it is making, and at this distance
+  // a strong emotional tint reads as coloured fog rather than as a mood.
+  'land:watchtower': { url: '/props/pirate/watchtower.glb', height: 6.0, tint: 0.22 },
+  'land:crag': { url: '/props/crag.glb', height: 4.0, tint: 0.22 },
+  'land:bench': { url: '/props/graveyard/bench.glb', height: 0.7, tint: 0.22 },
+  'land:tent': { url: '/props/survival/tent.glb', height: 1.6, tint: 0.22 },
+  'land:campfire': { url: '/props/survival/campfire.glb', height: 0.7, tint: 0.22 },
+  'land:cave': { url: '/props/cave.glb', height: 3.0, tint: 0.22 },
+  'land:bridge': { url: '/props/bridge.glb', height: 1.2, tint: 0.22 },
+  'land:gate': { url: '/props/gate.glb', height: 1.2, tint: 0.22 },
+  'land:signpost': { url: '/props/survival/signpost.glb', height: 1.4, tint: 0.22 },
+  'land:cairn': { url: '/props/cairn.glb', height: 1.8, tint: 0.22 },
+  'land:windmill': { url: '/props/fantasy/windmill.glb', height: 9.0, tint: 0.22 },
+  'land:watermill': { url: '/props/fantasy/watermill.glb', height: 3.6, tint: 0.22 },
+  'land:waterfall': { url: '/props/waterfall.glb', height: 6.0, tint: 0.22 },
+  'land:jetty': { url: '/props/pirate/jetty.glb', height: 0.6, tint: 0.22 },
+  'land:boat': { url: '/props/pirate/boat.glb', height: 0.6, tint: 0.22 },
+  'land:ship': { url: '/props/pirate/ship.glb', height: 4.5, tint: 0.22 },
+  'land:sea-rocks': { url: '/props/pirate/sea-rocks.glb', height: 1.2, tint: 0.22 },
+  'land:palm': { url: '/props/palm.glb', height: 3.2, tint: 0.22 },
+  'land:ruin': { url: '/props/ruin.glb', height: 2.6, tint: 0.22 },
+  'land:wreck': { url: '/props/pirate/wreck.glb', height: 4.0, tint: 0.22 },
+  'land:broken-fence': { url: '/props/fantasy/broken-fence.glb', height: 0.9, tint: 0.22 },
+  'land:tree-pine': { url: '/props/tree-pine.glb', height: 4.0, tint: 0.22 },
+  'land:tree-oak': { url: '/props/tree-oak.glb', height: 3.6, tint: 0.22 },
+
   // Fixed furniture, fetched by room.ts rather than by a motif. Namespaced so
   // it can never collide with a motif id.
   'room:bookcase': { url: '/props/bookcase.glb', height: 2.3, tint: 0.2 },

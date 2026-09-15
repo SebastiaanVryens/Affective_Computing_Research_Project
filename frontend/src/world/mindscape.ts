@@ -17,11 +17,12 @@
  */
 
 import * as THREE from 'three';
-import { PALETTE, type EmotionVector, charge } from '../emotions';
+import { PALETTE, type EmotionVector, charge, dominant } from '../emotions';
 import type { DiaryEntry } from '../state/db';
 import { chooseBiome, type BiomeChoice } from './biomes';
 import { GroundCover } from './groundcover';
 import { Horizon } from './horizon';
+import { Landmarks } from './landmarks';
 import { LAYER } from './layers';
 import type { ThreadAnchor } from './threads';
 import { MAX_MOTIFS, detectMotifs, type MotifPresence } from './motifs';
@@ -98,6 +99,7 @@ export class Mindscape {
   private terrain = new Terrain();
   private horizon = new Horizon();
   private cover = new GroundCover();
+  private landmarks = new Landmarks();
   private well = new Well();
   private room = new Room();
   private props = new PropFactory();
@@ -122,6 +124,7 @@ export class Mindscape {
       this.terrain.group,
       this.horizon.group,
       this.cover.group,
+      this.landmarks.group,
       this.well.group,
       this.room.group,
       this.propGroup,
@@ -176,6 +179,7 @@ export class Mindscape {
       // room you live in is a better image than a hole in a hillside.
       this.horizon.clear();
       this.cover.clear();
+      this.landmarks.clear();
       this.room.rebuild(lifetimeTotals, viewKindFor(this.motifs), this.haze, shape.seed);
     } else {
       this.room.clear();
@@ -189,9 +193,16 @@ export class Mindscape {
         lifetimeTotals,
         Math.min(1, shareOf('forest') * 2.4)
       );
-      this.cover.rebuild(shape, this.motifs, (x, z) =>
-        Math.hypot(x, z) < ISLAND_RADIUS ? this.terrain.heightAt(x, z) : this.horizon.heightAt(x, z)
-      );
+      // One question — "where is the ground here" — answered by whichever mesh
+      // owns the point. Both layers scatter across the seam, so neither can be
+      // allowed to have its own opinion about it.
+      const groundAt = (x: number, z: number): number =>
+        Math.hypot(x, z) < ISLAND_RADIUS
+          ? this.terrain.heightAt(x, z)
+          : this.horizon.heightAt(x, z);
+
+      this.cover.rebuild(shape, this.motifs, groundAt);
+      this.landmarks.rebuild(shape, this.motifs, groundAt, dominant(lifetimeTotals));
     }
 
     // The well belongs to every biome, indoors included — a hole in the floor of
@@ -419,6 +430,7 @@ export class Mindscape {
     this.haze.copy(sky);
     this.terrain.update(delta, elapsed, mood, sky);
     this.cover.update(elapsed, mood.arousal);
+    this.landmarks.update(delta, elapsed);
     this.well.update(elapsed);
     this.room.update(elapsed);
 
@@ -536,6 +548,7 @@ export class Mindscape {
     this.terrain.dispose();
     this.horizon.dispose();
     this.cover.dispose();
+    this.landmarks.dispose();
     this.well.dispose();
     this.room.dispose();
     this.props.dispose();

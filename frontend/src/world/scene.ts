@@ -125,6 +125,56 @@ const BASE_FOV = 52;
 const FOG_NEAR = 35;
 const FOG_FAR = 200;
 
+/**
+ * How fast the world turns when you hold a key, in radians per second.
+ *
+ * About a full turn in five seconds — two orders of magnitude above the ambient
+ * drift, because this is a deliberate act rather than weather. Slower than this
+ * and holding the key feels like nothing is happening; faster and a tap
+ * overshoots whatever you were trying to look at.
+ */
+const SPIN_SPEED = 1.2;
+
+/** How sharply the spin picks up and lets go. Higher is more immediate. */
+const SPIN_EASE = 7;
+
+/**
+ * How close and how far the camera may be dollied, as a multiple of the rig's
+ * own distance.
+ *
+ * Named, and shared by the wheel and the keys, because they are two ways of
+ * driving one control and a second copy of these numbers is a second thing to
+ * forget. In at 0.45 you can read the spine of a book on the island; out at 1.6
+ * the far field is still inside the fog, which is what stops the world ending
+ * in a visible rim.
+ */
+const ZOOM_MIN = 0.45;
+const ZOOM_MAX = 1.6;
+
+/**
+ * How fast the keys dolly, in e-folds per second.
+ *
+ * Multiplicative rather than linear, the same as the wheel: a fixed number of
+ * units per second crawls when you are close and lurches when you are far,
+ * because what the eye reads is the *ratio* the distance changed by. At this
+ * rate a held key crosses the whole range in about two seconds.
+ */
+const ZOOM_SPEED = 0.7;
+
+/**
+ * The orbit rate below which a world is, to the eye, not turning at all.
+ *
+ * Roughly one revolution in twenty minutes. Above it you can see the world
+ * move against the frame within a few seconds of watching; below it you cannot,
+ * and the core needs its own motion or it reads as a still photograph.
+ *
+ * Only the room gets anywhere near this — its `orbitScale` is a tenth — which
+ * is the point. It is a threshold rather than a comparison against the core's
+ * speed because every world is slower than the core's floor, and comparing the
+ * two would treat every world as still.
+ */
+const STILL_ENOUGH = 0.006;
+
 export interface SceneCallbacks {
   onOrbPicked?: (entryId: string) => void;
   onViewChanged?: (view: WorldView) => void;
@@ -155,10 +205,30 @@ export class MindscapeWorld {
   private parallax = new THREE.Vector2();
   private parallaxTarget = new THREE.Vector2();
 
-  /** Accumulated, not derived from elapsed: the two floors orbit at different
-   *  rates, and an angle computed as `elapsed * speed` would jump the moment
-   *  the speed being blended changed. */
+  /**
+   * Where the camera stands on its circle.
+   *
+   * Advances *by itself* at the mind floor's rate and nothing else — see
+   * `updateCamera`, which explains why the core's rotation is given to the
+   * galaxy instead of to this. What the viewer does with A and D is added on
+   * top and simply stays: turn the world round twice and it is two turns round,
+   * on both floors, until you turn it back.
+   *
+   * Accumulated rather than derived from elapsed time, because the rate itself
+   * changes: saving an entry can change the diary's restlessness, and an angle
+   * computed as `elapsed * speed` would jump the moment it did. Never wrapped,
+   * so there is no limit on how far round you can go in either direction — sin
+   * and cos do not care, and wrapping would put a seam in a control whose whole
+   * point is that it has none.
+   */
   private orbitAngle = 0;
+
+  /** -1 while turning left, +1 while turning right, 0 when no key is held. */
+  private spinInput = 0;
+  /** Eased toward `spinInput * SPIN_SPEED`, so the world starts and stops. */
+  private spinVelocity = 0;
+  /** +1 while pulling in, -1 while pushing out, 0 when no key is held. */
+  private zoomInput = 0;
 
   private view: WorldView = 'mind';
   /** 0 = fully on the island, 1 = fully at the orbs. */
@@ -348,6 +418,38 @@ export class MindscapeWorld {
   }
 
   /**
+   * Turn the world by hand.
+   *
+   * @param direction -1 to turn left, +1 to turn right, 0 to stop. Held rather
+   *                  than pulsed: the caller reports what is currently down, and
+   *                  the world keeps turning until told otherwise. There is no
+   *                  limit and no end stop — round and round, either way, on
+   *                  whichever floor you are on.
+   *
+   * Deliberately not a "rotate by N degrees" call. Stepping would mean choosing
+   * a step size, and any step large enough to feel responsive is large enough to
+   * skip past the thing you were turning toward.
+   */
+  setSpin(direction: number): void {
+    this.spinInput = Math.sign(direction);
+  }
+
+  /**
+   * Dolly in and out by hand.
+   *
+   * @param direction +1 to pull in, -1 to push out, 0 to stop. Held, like
+   *                  `setSpin`.
+   *
+   * Drives exactly what the wheel drives and stops where the wheel stops, so
+   * the two are one control with two inputs rather than two controls that
+   * happen to agree. Reaching the end of the range under a held key is silent —
+   * it simply stops, the way it does under the wheel.
+   */
+  setZoom(direction: number): void {
+    this.zoomInput = Math.sign(direction);
+  }
+
+  /**
    * Note this does not clear keywords on stop: words from the finished session
    * are left to drift out on their own, because cutting them at the moment you
    * stop talking makes the end of a session feel like a page refresh.
@@ -426,6 +528,18 @@ export class MindscapeWorld {
 
   private updateCamera(delta: number, elapsed: number, arousal: number): void {
     this.parallax.lerp(this.parallaxTarget, Math.min(1, delta * 2.2));
+
+    // Held keys move the same target the wheel moves, so they inherit its
+    // smoothing and its end stops for free. Exponential, because zoom is a
+    // ratio: halving the distance should take the same time whether you started
+    // near or far.
+    if (this.zoomInput !== 0) {
+      this.zoomTarget = clamp(
+        this.zoomTarget * Math.exp(-this.zoomInput * ZOOM_SPEED * delta),
+        ZOOM_MIN,
+        ZOOM_MAX
+      );
+    }
     this.zoom += (this.zoomTarget - this.zoom) * Math.min(1, delta * 6);
 
     const blend = this.blend;
@@ -451,10 +565,57 @@ export class MindscapeWorld {
     const mindSpeed = mind.orbitSpeed * (0.06 + 0.94 * restlessness);
     const coreSpeed = core.orbitSpeed * (0.45 + 0.55 * restlessness);
 
-    // Spiralling down rather than dropping straight: the extra angular rate
-    // during the flight is what makes the threads sweep past the camera instead
-    // of approaching it head-on, which is the whole sensation.
-    this.orbitAngle += delta * (lerp(mindSpeed, coreSpeed, blend) + rush * 0.035);
+    // The camera's angle only ever advances at the *mind* floor's rate.
+    //
+    // It used to advance at whichever floor you were on, which is the obvious
+    // reading and is wrong in one specific case. The core keeps a floor under
+    // its speed on purpose — a galaxy of memories that is completely static
+    // reads as a photograph — so on a world whose own rate is near zero the two
+    // disagree badly. Go down to the core from a room, wait, come back, and the
+    // room has turned thirty degrees while you were away: the still world was
+    // being rotated by the moving one through a shared accumulator.
+    //
+    // Now the mind floor's orientation is a pure function of how long the app
+    // has been open and how restless the diary is. Leave a still room and it is
+    // exactly where you left it, however long you spend below. A world that
+    // does turn still turns, and lands where it would have had you never gone
+    // down — which is the same rule, not an exception to it.
+    this.orbitAngle += delta * mindSpeed;
+
+    // Then whatever the viewer is asking for, on top.
+    //
+    // Eased rather than applied raw: a step change in angular rate reads as the
+    // world being yanked, and the ease is what makes a tap a nudge and a hold a
+    // sweep without needing two separate controls. Added to the same angle the
+    // drift uses, so the two compose instead of fighting — hold a key on a world
+    // that is already turning and you are speeding it up, not overriding it.
+    this.spinVelocity +=
+      (this.spinInput * SPIN_SPEED - this.spinVelocity) * Math.min(1, delta * SPIN_EASE);
+    this.orbitAngle += delta * this.spinVelocity;
+
+    // A still world gets its core turned for it. A turning one does not.
+    //
+    // The core's speed floor exists so that a galaxy of memories is never a
+    // photograph. On a world that already turns, the camera orbiting at the
+    // mind floor's rate satisfies that on its own, and adding anything here
+    // would make the core turn faster than the floor above it — reintroducing
+    // the very mismatch this is here to remove, just in the other direction.
+    //
+    // So it is gated on *stillness*, not on the gap between the two speeds. The
+    // difference matters: gating on the gap is the same expression as adding
+    // `coreSpeed - mindSpeed`, which is what the first attempt did and which
+    // spins the galaxy for every biome. Only a floor that genuinely does not
+    // move needs rescuing.
+    //
+    // Rotating the orbs one way and orbiting the camera the other are the same
+    // picture — relative motion is all the eye has to go on down there — but
+    // only one of them is remembered by the floor above. The descent's extra
+    // rate goes here too, so `orbitAngle` has no term a round trip could leave
+    // behind; the threads still sweep past rather than approaching head-on,
+    // because their lower ends are what is moving.
+    const stillness = 1 - Math.min(1, mindSpeed / STILL_ENOUGH);
+    const coreSpin = coreSpeed * stillness * blend + rush * 0.035;
+    this.orbs.group.rotation.y -= delta * coreSpin;
 
     // A true dolly toward the look point, so zooming in on the island doesn't
     // also tip the camera further overhead.
@@ -526,7 +687,7 @@ export class MindscapeWorld {
   private onWheel = (event: WheelEvent): void => {
     event.preventDefault();
     const step = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
-    this.zoomTarget = clamp(this.zoomTarget * (1 + step * 0.0011), 0.45, 1.6);
+    this.zoomTarget = clamp(this.zoomTarget * (1 + step * 0.0011), ZOOM_MIN, ZOOM_MAX);
   };
 
   private onClick = (): void => {

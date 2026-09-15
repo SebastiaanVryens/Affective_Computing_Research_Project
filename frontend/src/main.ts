@@ -196,6 +196,23 @@ async function main(): Promise<void> {
     }
   });
 
+  /** Which keys drive the camera, and which way. */
+  const SPIN_KEYS: Record<string, number> = { KeyA: -1, KeyD: 1 };
+  const ZOOM_KEYS: Record<string, number> = { KeyW: 1, KeyS: -1 };
+  const held = new Set<string>();
+  const applyKeys = (): void => {
+    let spin = 0;
+    let zoom = 0;
+    for (const code of held) {
+      spin += SPIN_KEYS[code] ?? 0;
+      zoom += ZOOM_KEYS[code] ?? 0;
+    }
+    world.setSpin(spin);
+    world.setZoom(zoom);
+  };
+  const isCameraKey = (code: string): boolean =>
+    SPIN_KEYS[code] !== undefined || ZOOM_KEYS[code] !== undefined;
+
   // Space bar as a shortcut, since the button is the only control that matters.
   // C flips floors, so you can go down and look at a memory without breaking
   // off mid-sentence to find the mouse.
@@ -211,7 +228,33 @@ async function main(): Promise<void> {
     } else if (event.code === 'KeyC') {
       event.preventDefault();
       world.toggleView();
+    } else if (isCameraKey(event.code)) {
+      held.add(event.code);
+      applyKeys();
     }
+  });
+
+  // A and D turn the world, W and S pull it closer and push it away, for as
+  // long as they are held.
+  //
+  // Which keys are *down* rather than which was pressed last, because the two
+  // come apart in ordinary use: hold A, press D without letting go, and a
+  // last-press scheme has the world turning right with the left key still down.
+  // Holding both cancels, which is the only sensible reading of both.
+  //
+  // Key-up is not guarded the way key-down is. A guard there would strand the
+  // world spinning if you released the key after opening a modal or clicking
+  // into a text field — the release has to be heard wherever it happens.
+  document.addEventListener('keyup', (event) => {
+    if (!held.delete(event.code)) return;
+    applyKeys();
+  });
+
+  // Alt-tabbing away never delivers the key-up, so the world would still be
+  // turning — or still zooming — when you came back.
+  window.addEventListener('blur', () => {
+    held.clear();
+    applyKeys();
   });
 
   // -- start the camera ------------------------------------------------

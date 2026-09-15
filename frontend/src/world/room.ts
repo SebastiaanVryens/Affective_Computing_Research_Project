@@ -25,7 +25,7 @@ import { PALETTE, type EmotionVector, dominant, intensity } from '../emotions';
 import { NOISE_2D } from './glsl';
 import { WELL_RADIUS } from './terrain';
 import { motifModel } from './models';
-import { makeViewTexture, type ViewKind } from './view';
+import { WindowView, type ViewKind } from './view';
 
 /** Half the floor's width. Matched to ISLAND_RADIUS so the camera rig fits it. */
 const HALF = 13;
@@ -39,6 +39,8 @@ export class Room {
   readonly group = new THREE.Group();
 
   private owned: Array<THREE.BufferGeometry | THREE.Material> = [];
+  /** Everything beyond the glass. Owns its own geometry; cleared with the room. */
+  private view = new WindowView();
   private lampMaterial: THREE.MeshBasicMaterial | null = null;
   /** The glazing's base colour, so `update` has something stable to modulate. */
   private daylight = new THREE.Color('#cfe4f5');
@@ -181,14 +183,31 @@ export class Room {
     sky: THREE.Color,
     seed: number
   ): void {
-    // What is actually outside, painted from whatever the person talks about
-    // when they are not indoors. See view.ts.
-    const scene = makeViewTexture(view, sky, mood, seed);
-    this.owned.push({ dispose: () => scene.dispose() } as THREE.Material);
+    // What is actually outside, built from whatever the person talks about when
+    // they are not indoors. Real geometry standing in real space beyond the
+    // wall, not a picture of it — see view.ts for why that distinction turned
+    // out to matter.
+    this.view.rebuild(view, sky, mood, seed);
+    this.group.add(this.view.group);
 
-    this.daylight.set('#ffffff');
+    // Glass, now that there is something behind it to see.
+    //
+    // Barely there: a faint cool wash with a little of the sky in it, so the
+    // pane catches the light at a glancing angle and disappears head-on. It
+    // still carries the room's daylight pulse in `update`, which is what keeps
+    // the interior feeling lit from one side.
+    this.daylight.copy(sky).lerp(new THREE.Color('#cfe4f5'), 0.5);
     const glass = this.material(
-      new THREE.MeshBasicMaterial({ map: scene, color: this.daylight.clone() })
+      new THREE.MeshBasicMaterial({
+        color: this.daylight.clone(),
+        transparent: true,
+        opacity: 0.12,
+        // Never written, or the glass would occlude the view behind it in the
+        // transparent pass and the window would go opaque.
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        fog: false,
+      })
     );
     const mullion = this.standard(new THREE.Color('#2d3138'), 0.55);
 
@@ -372,6 +391,9 @@ export class Room {
   }
 
   clear(): void {
+    // The view owns geometry of its own — a few hundred instanced towers or
+    // trees — so detaching its group is not enough to let go of it.
+    this.view.clear();
     for (const child of [...this.group.children]) this.group.remove(child);
     for (const thing of this.owned) thing.dispose();
     this.owned = [];

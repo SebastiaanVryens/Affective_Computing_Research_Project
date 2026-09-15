@@ -200,7 +200,71 @@ export function elevation(x: number, z: number, shape: TerrainShape): number {
   // A wobble on the waterline, or the shore is a ruled line across the view.
   const wobble = (fbm(x * 0.085 + 4.4, z * 0.085 - 2.1, shape.seed + 41) * 2 - 1) * 0.85;
 
-  return (1 + hills + wobble + shoreLean) * lip + rim;
+  return (1 + hills + wobble + shoreLean) * lip + rim + seaIsland(x, z, shape);
+}
+
+/**
+ * Land out in the water.
+ *
+ * A sea with nothing in it is a colour, not a place: there is no scale, nothing
+ * for the eye to travel to, and no reason to look that way at all. One small
+ * island a long way out fixes all three, and it is the cheapest possible piece
+ * of Attention Restoration Theory's *extent* — the sense that the world carries
+ * on past the frame.
+ *
+ * Exported and added in two places, which is the only fiddly thing about it.
+ * The far field draws its own surface from horizon.ts's `backdrop` and never
+ * consults this function past the blend band, while water.ts bakes its depth
+ * from `elevation`. Put the island in only one of them and you get either an
+ * island the sea does not know about — drowned in deep-water colour with no
+ * beach — or a shoal of shallow water with no land in it. Both were tried.
+ *
+ * Placed along the grain, on the downhill side, because that is where the water
+ * is. Everything else about it is derived from the seed, so it is the same
+ * island every time the diary is opened.
+ */
+export function seaIsland(x: number, z: number, shape: TerrainShape): number {
+  if (shape.biome.edge !== 'shore') return 0;
+
+  // Two, at different sizes and bearings: one to look at and one to stop the
+  // first from reading as a deliberately placed object.
+  return (
+    island(x, z, shape, 0.42, 58, 10.5, 13) +
+    island(x, z, shape, -0.63, 46, 5.5, 8.5)
+  );
+}
+
+/**
+ * One landform in the water.
+ *
+ * @param swing   Bearing away from straight downhill, in radians.
+ * @param out     How far from the middle of the world it sits.
+ * @param width   Radius at which it has fallen to a third of its height.
+ * @param rise    Peak height above the surrounding sea floor.
+ */
+function island(
+  x: number,
+  z: number,
+  shape: TerrainShape,
+  swing: number,
+  out: number,
+  width: number,
+  rise: number
+): number {
+  const bearing = shape.grain + swing;
+  const cx = Math.cos(bearing) * out;
+  const cz = Math.sin(bearing) * out;
+
+  const d = Math.hypot(x - cx, z - cz);
+  // Cut off well before the falloff would matter, so the whole thing costs one
+  // distance check almost everywhere in the world.
+  if (d > width * 2.2) return 0;
+
+  // A rough edge, or it is a cone. Sampled on position rather than on the
+  // distance so the coastline wanders rather than pulsing in and out.
+  const ragged = 1 + (fbm(x * 0.09 + 31.7, z * 0.09 - 12.3, shape.seed + 205) * 2 - 1) * 0.45;
+  const t = d / (width * ragged);
+  return Math.exp(-t * t) * rise;
 }
 
 /**
