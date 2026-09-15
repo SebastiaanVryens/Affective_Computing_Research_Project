@@ -53,6 +53,36 @@ geometry came from.
 | `fantasy/broken-fence.glb` | Fence Broken            | Kenney | Fantasy Town Kit  | CC0 1.0 |
 | `graveyard/bench.glb`        | Bench                   | Kenney | Graveyard Kit     | CC0 1.0 |
 
+### Trees — Amir Forest Nature Pack
+
+| File                   | Model            | Author       | Pack                     | Licence |
+| ---------------------- | ---------------- | ------------ | ------------------------ | ------- |
+| `amir/tree-a1..a4.glb` | tree-07/19/31/43 | ahmedamirdev | Amir Forest Nature Pack  | CC0 1.0 |
+| `amir/tree-b1..b4.glb` | tree-08/20/32/44 | ahmedamirdev | Amir Forest Nature Pack  | CC0 1.0 |
+| `amir/tree-c1..c4.glb` | tree-09/21/33/45 | ahmedamirdev | Amir Forest Nature Pack  | CC0 1.0 |
+
+Three shapes, each in the pack's four foliage colours — green, orange, red and
+snow. The pack numbers its trees 1–48 as twelve shapes repeated across four
+colour sets twelve apart, so shape *n* is files *n*, *n+12*, *n+24*, *n+36*.
+Shapes 1–6 are bare and dead, with no foliage to colour; only 7–12 are leafy,
+which is not obvious from the filenames and cost an import to find out.
+
+From <https://ahmedamirdev.itch.io/amir-forest-nature-pack>.
+
+**One caveat worth reading before this repository goes anywhere public.** The
+licence is given as CC0, which permits redistribution, but the same page adds
+"No resale or redistribution of the raw assets". Those two statements do not
+agree. CC0 is what governs legally; the sentence is what the author has asked
+for. Committing these `.glb` files is arguably redistributing raw assets, so
+either keep them out of the repository and fetch them at setup, or ask the
+author. Everything from Kenney above is plain CC0 with no such rider and has no
+such problem.
+
+These also need more taming than the Kenney models: see `tame` in
+`src/world/models.ts`. They ship an emission map at strength 20, no
+`metallicFactor` (which glTF then defaults to fully metallic), and a palette
+much louder than this world's.
+
 ### A note on the subfolders
 
 Four of Kenney's kits — pirate, survival, fantasy town and graveyard — do not

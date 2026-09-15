@@ -99,7 +99,10 @@ export const MOTIFS: Motif[] = [
     id: 'forest',
     label: 'Woods',
     prefer: 'high',
-    spacing: 2.2,
+    // Wide enough for a broad canopy. The tree models are about as wide as they
+    // are tall, so a spacing set for a narrow conifer has them growing through
+    // each other.
+    spacing: 3.2,
     maxProps: 9,
     indoor: 'room:plant',
     terms: `forest tree wood hike trail nature park camping pine leaf autumn

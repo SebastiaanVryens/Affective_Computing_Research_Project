@@ -65,7 +65,7 @@
 import * as THREE from 'three';
 import { PALETTE, type Emotion } from '../emotions';
 import type { BiomeId } from './biomes';
-import { motifModel } from './models';
+import { motifModel, pickModel } from './models';
 import type { MotifPresence } from './motifs';
 import { makeRng, type Rng } from './props';
 import { ISLAND_RADIUS, alongGrain, type TerrainShape } from './terrain';
@@ -558,8 +558,11 @@ export class Landmarks {
         const spot = this.findSpot(rng, landmark, shape, inner, outer, sea, heightAt, placed);
         if (!spot) continue;
 
+        // Resolves to one of the variants where the landmark has any — the
+        // broadleaves do, so a stand of them is a mixed wood rather than one
+        // tree stamped out twelve times.
         const model = motifModel(
-          landmark.model,
+          pickModel(landmark.model, rng),
           { color: new THREE.Color(PALETTE[emotion].base), amount: 0.22 }
         );
         if (!model) break; // the .glb is missing; no point trying the rest
