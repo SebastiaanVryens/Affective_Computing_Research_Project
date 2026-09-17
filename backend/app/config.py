@@ -29,6 +29,22 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _meld_checkpoint() -> Path:
+    """Where the fine-tuned MELD head lives.
+
+    In a packaged build the weights ship beside the app rather than in
+    backend/models, so MINDSCAPE_MODEL_BUNDLE (set by the desktop launcher,
+    alongside HF_HOME for the hub models) wins when it points somewhere real.
+    Falls through to the dev location so nothing changes when it is unset.
+    """
+    bundle = os.getenv("MINDSCAPE_MODEL_BUNDLE")
+    if bundle:
+        candidate = Path(bundle) / "meld-text"
+        if candidate.is_dir():
+            return candidate
+    return BACKEND_ROOT / "models" / "meld-text"
+
+
 @dataclass
 class Settings:
     # --- device ---------------------------------------------------------
@@ -39,7 +55,7 @@ class Settings:
     # Where train_text.py writes its fine-tuned MELD checkpoint. If this
     # directory exists it wins; otherwise we fall back to the HF model below,
     # so the app is useful before you've trained anything.
-    meld_text_model: Path = BACKEND_ROOT / "models" / "meld-text"
+    meld_text_model: Path = field(default_factory=_meld_checkpoint)
     fallback_text_model: str = os.getenv(
         "MINDSCAPE_TEXT_MODEL", "j-hartmann/emotion-english-distilroberta-base"
     )

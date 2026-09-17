@@ -25,6 +25,21 @@ data/*.json
 # Scratch audio written by the manual test scripts
 data/_*.wav
 
+# Voice recordings for training/eval_stitch.py. Someone's actual voice — never
+# commit these to a public repo. The .txt references beside them are derived
+# from diary_probe.py and are fine to track.
+data/stitch/*.wav
+data/stitch/*.webm
+data/stitch/*.m4a
+data/stitch/*.mp3
+
+# Desktop build payload. ~2.1GB of model weights assembled by
+# `python -m bundling.bundle_models` — regenerable, and far past anything git
+# should hold. The installer carries these; the repo does not.
+desktop/resources/
+desktop/node_modules/
+desktop/dist/
+
 # Local overrides
 .env
 .env.local
