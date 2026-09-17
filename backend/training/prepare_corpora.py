@@ -81,7 +81,7 @@ TWEET_LABELS = {
 }
 
 
-def load_goemotions(cap: int | None) -> pd.DataFrame:
+def load_goemotions(cap: int | None, cap_mode: str = "proportional") -> pd.DataFrame:
     from datasets import load_dataset
 
     ds = load_dataset(
@@ -104,10 +104,10 @@ def load_goemotions(cap: int | None) -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
     print(f"  dropped {dropped_ambiguous} multi-Ekman examples as ambiguous")
-    return _finalize(df, "goemotions", cap)
+    return _finalize(df, "goemotions", cap, cap_mode)
 
 
-def load_dailydialog(cap: int | None) -> pd.DataFrame:
+def load_dailydialog(cap: int | None, cap_mode: str = "proportional") -> pd.DataFrame:
     from datasets import load_dataset
 
     ds = load_dataset("benjaminbeilharz/better_daily_dialog", split="train")
@@ -117,10 +117,10 @@ def load_dailydialog(cap: int | None) -> pd.DataFrame:
             "Emotion": [DAILYDIALOG_LABELS.get(e) for e in ds["emotion"]],
         }
     )
-    return _finalize(df, "dailydialog", cap)
+    return _finalize(df, "dailydialog", cap, cap_mode)
 
 
-def load_tweets(cap: int | None) -> pd.DataFrame:
+def load_tweets(cap: int | None, cap_mode: str = "proportional") -> pd.DataFrame:
     from datasets import load_dataset
 
     ds = load_dataset("dair-ai/emotion", split="train")
@@ -130,7 +130,7 @@ def load_tweets(cap: int | None) -> pd.DataFrame:
             "Emotion": [TWEET_LABELS.get(l) for l in ds["label"]],
         }
     )
-    return _finalize(df, "tweets", cap)
+    return _finalize(df, "tweets", cap, cap_mode)
 
 
 LOADERS = {
@@ -140,7 +140,9 @@ LOADERS = {
 }
 
 
-def _finalize(df: pd.DataFrame, source: str, cap: int | None) -> pd.DataFrame:
+def _finalize(
+    df: pd.DataFrame, source: str, cap: int | None, cap_mode: str = "proportional"
+) -> pd.DataFrame:
     df = df.dropna(subset=["text", "Emotion"])
     df = df[df["Emotion"].isin(EMOTIONS)]
     df = df[df["text"].str.len() >= 4]
@@ -159,11 +161,31 @@ def _finalize(df: pd.DataFrame, source: str, cap: int | None) -> pd.DataFrame:
         print(f"  subsampled neutral {counts['neutral']} -> {keep}")
 
     if cap and len(df) > cap:
-        # Stratified cap, so trimming for size doesn't also reshape the balance.
-        df = (
-            df.groupby("Emotion", group_keys=False)
-            .apply(lambda g: g.sample(n=max(1, int(cap * len(g) / len(df))), random_state=42))
-        )
+        if cap_mode == "proportional":
+            # Stratified cap, so trimming for size doesn't also reshape the balance.
+            df = (
+                df.groupby("Emotion", group_keys=False)
+                .apply(lambda g: g.sample(n=max(1, int(cap * len(g) / len(df))), random_state=42))
+            )
+        else:
+            # Cap each class instead of the corpus.
+            #
+            # The proportional cap preserves the balance, which sounds neutral and
+            # isn't: these corpora exist to help the classes MELD starves, and
+            # trimming them proportionally trims the rare classes too. DailyDialog
+            # went 87k -> 25k and took fear down to 93 examples — fewer than MELD's
+            # own fear count, for a corpus added to fix exactly that.
+            #
+            # Capping per class keeps every rare example and takes the cut out of
+            # joy and neutral, which have thousands to spare. The auxiliary
+            # distribution is deliberately no longer the source corpus's; that is
+            # the point, and train_text.py's class weighting is computed after the
+            # mix, so it follows automatically.
+            per_class = max(1, cap // len(EMOTIONS))
+            df = df.groupby("Emotion", group_keys=False).apply(
+                lambda g: g.sample(n=min(len(g), per_class), random_state=42)
+            )
+            print(f"  capped per class at {per_class}")
         print(f"  capped to {len(df)} examples")
 
     df = df.sample(frac=1.0, random_state=42).reset_index(drop=True)
@@ -202,7 +224,16 @@ def main() -> None:
         "--cap",
         type=int,
         default=25000,
-        help="max examples per corpus, stratified (0 = no cap)",
+        help="max examples per corpus (0 = no cap)",
+    )
+    parser.add_argument(
+        "--cap-mode",
+        default="proportional",
+        choices=["proportional", "per-class"],
+        help="proportional keeps the source corpus's balance; per-class keeps every "
+        "rare example and takes the cut out of joy/neutral. These corpora exist to "
+        "feed the classes MELD starves, so per-class is usually what you want — "
+        "proportional is the default only because it is what the shipped model used",
     )
     args = parser.parse_args()
 
@@ -214,7 +245,7 @@ def main() -> None:
         if name not in LOADERS:
             raise SystemExit(f"Unknown corpus '{name}'. Options: {', '.join(LOADERS)}")
         print(f"\n=== {name} ===")
-        df = LOADERS[name](cap)
+        df = LOADERS[name](cap, args.cap_mode)
         report(df, name)
         df.to_csv(OUT_DIR / f"{name}.csv", index=False)
         print(f"  -> {OUT_DIR / f'{name}.csv'}")

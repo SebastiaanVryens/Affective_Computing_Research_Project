@@ -1,0 +1,335 @@
+{
+  "temperatures": {
+    "neural": 20.0,
+    "prosody": 20.0
+  },
+  "prior_bias": {
+    "neural": [
+      6.71014024522779,
+      -4.947542638306196,
+      4.882368441478675,
+      -3.566892442289921,
+      -2.1891889899226076,
+      1.2850971033659697,
+      -2.173981719553711
+    ],
+    "prosody": [
+      -9.510713047875646,
+      8.27068451063291,
+      -8.602807380074736,
+      14.021894887011456,
+      13.600042530980108,
+      -9.651386534833668,
+      -8.127714965840422
+    ]
+  },
+  "emotions": [
+    "neutral",
+    "joy",
+    "sadness",
+    "anger",
+    "fear",
+    "disgust",
+    "surprise"
+  ],
+  "splits": {
+    "dev": {
+      "stats": {
+        "utterances": 1109,
+        "scored": 1060,
+        "dropped": {
+          "too-short": 49
+        },
+        "mean_neural_ms": 82.3,
+        "mean_duration_s": 3.26
+      },
+      "metrics": {
+        "prior": {
+          "n": 1060,
+          "weighted_f1": 0.2530301137073597,
+          "macro_f1": 0.08514664143803218,
+          "accuracy": 0.42452830188679247,
+          "ece": 0.0,
+          "mean_confidence": 0.42452830188679247
+        },
+        "neural_raw": {
+          "n": 1060,
+          "weighted_f1": 0.12292283877762819,
+          "macro_f1": 0.1303349653753765,
+          "accuracy": 0.1641509433962264,
+          "ece": 0.743495636363864,
+          "mean_confidence": 0.9076465797600902
+        },
+        "neural_calibrated": {
+          "n": 1060,
+          "weighted_f1": 0.12292283877762819,
+          "macro_f1": 0.1303349653753765,
+          "accuracy": 0.1641509433962264,
+          "ece": 0.03811076675644486,
+          "mean_confidence": 0.20226171015267125
+        },
+        "neural_prior_corrected": {
+          "n": 1060,
+          "weighted_f1": 0.30954725775875436,
+          "macro_f1": 0.19904703770648302,
+          "accuracy": 0.30849056603773584,
+          "ece": 0.3934289869484344,
+          "mean_confidence": 0.6999806432052644
+        },
+        "neural_prior_and_T": {
+          "n": 1060,
+          "weighted_f1": 0.2530301137073597,
+          "macro_f1": 0.08514664143803218,
+          "accuracy": 0.42452830188679247,
+          "ece": 0.43565706623597644,
+          "mean_confidence": 0.8601853681227689
+        },
+        "prosody_raw": {
+          "n": 1060,
+          "weighted_f1": 0.2530301137073597,
+          "macro_f1": 0.08514664143803218,
+          "accuracy": 0.42452830188679247,
+          "ece": 0.3697252439862821,
+          "mean_confidence": 0.7837414164930206
+        },
+        "prosody_calibrated": {
+          "n": 1060,
+          "weighted_f1": 0.2530301137073597,
+          "macro_f1": 0.08514664143803218,
+          "accuracy": 0.42452830188679247,
+          "ece": 0.18655267199423262,
+          "mean_confidence": 0.23797562989255977
+        }
+      },
+      "classification_report": "              precision    recall  f1-score   support\n\n     neutral      0.667     0.013     0.026       450\n         joy      0.155     0.344     0.213       157\n     sadness      0.400     0.075     0.126       107\n       anger      0.179     0.392     0.246       148\n        fear      0.000     0.000     0.000        36\n     disgust      0.083     0.048     0.061        21\n    surprise      0.188     0.333     0.240       141\n\n    accuracy                          0.164      1060\n   macro avg      0.239     0.172     0.130      1060\nweighted avg      0.398     0.164     0.123      1060\n",
+      "confusion_matrix": [
+        [
+          6,
+          161,
+          6,
+          148,
+          45,
+          5,
+          79
+        ],
+        [
+          0,
+          54,
+          2,
+          35,
+          18,
+          2,
+          46
+        ],
+        [
+          2,
+          36,
+          8,
+          25,
+          17,
+          1,
+          18
+        ],
+        [
+          1,
+          38,
+          1,
+          58,
+          4,
+          1,
+          45
+        ],
+        [
+          0,
+          13,
+          1,
+          13,
+          0,
+          0,
+          9
+        ],
+        [
+          0,
+          7,
+          0,
+          6,
+          1,
+          1,
+          6
+        ],
+        [
+          0,
+          40,
+          2,
+          39,
+          11,
+          2,
+          47
+        ]
+      ],
+      "neutral_inflation": {
+        "neural": {
+          "predicted_neutral_rate": 0.0085,
+          "true_neutral_rate": 0.4245,
+          "mean_neutral_mass": 0.0093,
+          "inflation_ratio": 0.02
+        },
+        "prosody": {
+          "predicted_neutral_rate": 1.0,
+          "true_neutral_rate": 0.4245,
+          "mean_neutral_mass": 0.7837,
+          "inflation_ratio": 2.356
+        }
+      }
+    },
+    "test": {
+      "stats": {
+        "utterances": 2610,
+        "scored": 2487,
+        "dropped": {
+          "too-short": 123
+        },
+        "mean_neural_ms": 87.3,
+        "mean_duration_s": 3.47
+      },
+      "metrics": {
+        "prior": {
+          "n": 2487,
+          "weighted_f1": 0.3114562473025994,
+          "macro_f1": 0.09267667947374549,
+          "accuracy": 0.48009650180940894,
+          "ece": 1.1102230246251565e-16,
+          "mean_confidence": 0.4800965018094088
+        },
+        "neural_raw": {
+          "n": 2487,
+          "weighted_f1": 0.09807341710430699,
+          "macro_f1": 0.10901255905923539,
+          "accuracy": 0.14475271411338964,
+          "ece": 0.7572997977394663,
+          "mean_confidence": 0.902052511852856
+        },
+        "neural_calibrated": {
+          "n": 2487,
+          "weighted_f1": 0.09807341710430699,
+          "macro_f1": 0.10901255905923539,
+          "accuracy": 0.14475271411338964,
+          "ece": 0.05671787469273454,
+          "mean_confidence": 0.2014705888061242
+        },
+        "neural_prior_corrected": {
+          "n": 2487,
+          "weighted_f1": 0.29541832869115286,
+          "macro_f1": 0.15424234900482345,
+          "accuracy": 0.28910333735424204,
+          "ece": 0.41738217367918984,
+          "mean_confidence": 0.7064855110334319
+        },
+        "neural_prior_and_T": {
+          "n": 2487,
+          "weighted_f1": 0.3114562473025994,
+          "macro_f1": 0.09267667947374549,
+          "accuracy": 0.48009650180940894,
+          "ece": 0.3802487516606029,
+          "mean_confidence": 0.8603452534700117
+        },
+        "prosody_raw": {
+          "n": 2487,
+          "weighted_f1": 0.3114562473025994,
+          "macro_f1": 0.09267667947374549,
+          "accuracy": 0.48009650180940894,
+          "ece": 0.3200759433081708,
+          "mean_confidence": 0.7870757709835112
+        },
+        "prosody_calibrated": {
+          "n": 2487,
+          "weighted_f1": 0.3114562473025994,
+          "macro_f1": 0.09267667947374549,
+          "accuracy": 0.48009650180940894,
+          "ece": 0.24102113930378405,
+          "mean_confidence": 0.23907536250562492
+        }
+      },
+      "classification_report": "              precision    recall  f1-score   support\n\n     neutral      0.550     0.009     0.018      1194\n         joy      0.151     0.341     0.210       381\n     sadness      0.250     0.045     0.076       201\n       anger      0.159     0.382     0.224       327\n        fear      0.026     0.102     0.041        49\n     disgust      0.000     0.000     0.000        68\n    surprise      0.143     0.300     0.194       267\n\n    accuracy                          0.145      2487\n   macro avg      0.183     0.168     0.109      2487\nweighted avg      0.344     0.145     0.098      2487\n",
+      "confusion_matrix": [
+        [
+          11,
+          427,
+          19,
+          403,
+          102,
+          16,
+          216
+        ],
+        [
+          3,
+          130,
+          3,
+          98,
+          33,
+          3,
+          111
+        ],
+        [
+          4,
+          72,
+          9,
+          44,
+          21,
+          5,
+          46
+        ],
+        [
+          1,
+          100,
+          3,
+          125,
+          12,
+          4,
+          82
+        ],
+        [
+          0,
+          14,
+          0,
+          21,
+          5,
+          1,
+          8
+        ],
+        [
+          0,
+          28,
+          0,
+          21,
+          4,
+          0,
+          15
+        ],
+        [
+          1,
+          89,
+          2,
+          75,
+          17,
+          3,
+          80
+        ]
+      ],
+      "neutral_inflation": {
+        "neural": {
+          "predicted_neutral_rate": 0.008,
+          "true_neutral_rate": 0.4801,
+          "mean_neutral_mass": 0.0097,
+          "inflation_ratio": 0.017
+        },
+        "prosody": {
+          "predicted_neutral_rate": 1.0,
+          "true_neutral_rate": 0.4801,
+          "mean_neutral_mass": 0.7871,
+          "inflation_ratio": 2.083
+        }
+      }
+    }
+  }
+}

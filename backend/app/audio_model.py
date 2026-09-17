@@ -2,9 +2,12 @@
 
 Two tiers, because the good model is expensive on CPU:
 
-1. ``wav2vec2`` SER head (RAVDESS-trained, 8 classes) when enabled and loadable.
-   Its labels map onto MELD's seven with only one collapse: RAVDESS "calm"
-   folds into neutral.
+1. ``wav2vec2`` SER head when enabled and loadable, mapped onto MELD's seven by
+   ``SER_TO_MELD``. The default checkpoint is RAVDESS-style (8 classes, "calm"
+   folding into neutral) — and **does not currently load**: it predates the
+   current ``Wav2Vec2ForSequenceClassification`` layout, so ``_load`` rejects it
+   rather than serve a randomly initialised head. See the README for a
+   replacement that loads cleanly and needs no label collapse.
 2. A prosody heuristic that needs nothing but numpy. It reads energy, pitch
    variability and voiced-fraction into an arousal/valence guess. It is *not* a
    classifier and shouldn't be reported as one in the write-up — it exists so
@@ -28,9 +31,16 @@ from .emotions import EMOTIONS, from_label_scores, normalize, uniform_vector
 
 log = logging.getLogger(__name__)
 
-# RAVDESS (what the wav2vec2 head was trained on) -> MELD. "calm" has no MELD
-# counterpart and is the closest thing RAVDESS has to a resting state.
-RAVDESS_TO_MELD = {
+# SER head labels -> MELD. Covers both label sets we have used.
+#
+# RAVDESS-style heads emit eight classes including "calm", which has no MELD
+# counterpart and is folded into neutral — two source classes landing on one
+# target, which biases the channel toward neutral by construction.
+#
+# Heads trained on the seven-class convention (angry/disgust/fearful/happy/
+# neutral/sad/surprised) map one-to-one with no collapse, which is a reason to
+# prefer them. "calm" is simply absent from those and the entry goes unused.
+SER_TO_MELD = {
     "angry": "anger",
     "calm": "neutral",
     "disgust": "disgust",
@@ -102,7 +112,41 @@ class VoiceEmotionModel:
                 name,
             )
             extractor = AutoFeatureExtractor.from_pretrained(name)
-            model = AutoModelForAudioClassification.from_pretrained(name)
+            model, loading_info = AutoModelForAudioClassification.from_pretrained(
+                name, output_loading_info=True
+            )
+
+            # Refuse a checkpoint whose classification head did not load.
+            #
+            # transformers reports a shape or name mismatch by *discarding* the
+            # checkpoint's tensors, randomly initialising replacements, and
+            # printing a warning. Nothing raises. A model in that state answers
+            # every request confidently and at chance, which is far worse here
+            # than having no voice channel: fusion.py weights by entropy, so a
+            # confident random head earns real weight.
+            #
+            # This is not hypothetical. The default checkpoint
+            # (ehcalabres/...) was saved under transformers 4.8.2 with the old
+            # Wav2Vec2ClassificationHead layout — `classifier.dense` and
+            # `classifier.output` — while current transformers builds
+            # `projector` + `classifier`. Every head tensor is therefore
+            # newly initialised, and the feature extractor alone is loaded.
+            missing = [
+                key
+                for key in loading_info.get("missing_keys", [])
+                if key.startswith(("classifier", "projector"))
+            ]
+            if missing:
+                raise RuntimeError(
+                    f"{name}: the classification head did not load — "
+                    f"{len(missing)} head tensors were randomly initialised "
+                    f"({', '.join(sorted(missing)[:4])}). Its predictions would be "
+                    "noise. This checkpoint predates the current "
+                    "Wav2Vec2ForSequenceClassification layout; pick a checkpoint "
+                    "saved against this transformers version, or set "
+                    "MINDSCAPE_VOICE_EMOTION=false."
+                )
+
             model.eval()
             model.to(settings.resolved_device())
 
@@ -119,15 +163,26 @@ class VoiceEmotionModel:
         finally:
             self._loading = False
 
-    def predict(self, waveform: Optional[np.ndarray]) -> Tuple[List[float], str]:
-        """Return (canonical vector, source tag)."""
+    def predict(self, waveform: Optional[np.ndarray]) -> Tuple[Optional[List[float]], str]:
+        """Return (canonical vector, source tag).
+
+        The vector is None when this channel has nothing worth fusing, which
+        ``fuse()`` reads as ``available: false`` and renormalises around — the
+        same way the face channel reports no face. The source tag always says
+        which tier actually ran, so None is never silent.
+        """
         if waveform is None or waveform.size < MIN_DURATION_S * SAMPLE_RATE:
-            return uniform_vector(), "insufficient-audio"
+            return None, "insufficient-audio"
 
         if self._ensure_loaded():
             vector = self._predict_neural(waveform)
             if vector is not None:
                 return vector, "wav2vec2-ser"
+
+        # Measured to carry no signal while being confidently peaked on neutral;
+        # see settings.prosody_in_fusion for the numbers and the reasoning.
+        if not settings.prosody_in_fusion:
+            return None, "prosody-heuristic"
 
         return prosody_vector(waveform), "prosody-heuristic"
 
@@ -154,7 +209,7 @@ class VoiceEmotionModel:
                 scores: dict[str, float] = {}
                 for idx, prob in enumerate(probs):
                     raw_label = self._id2label.get(idx, "").lower()
-                    meld_label = RAVDESS_TO_MELD.get(raw_label)
+                    meld_label = SER_TO_MELD.get(raw_label)
                     if meld_label:
                         scores[meld_label] = scores.get(meld_label, 0.0) + float(prob)
                 accumulated += np.asarray(from_label_scores(scores))

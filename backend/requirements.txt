@@ -18,5 +18,14 @@ scikit-learn>=1.4
 pandas>=2.0
 accelerate>=0.33
 
+# --- training the face channel (training/prepare_meld_video.py, train_face.py) ---
+# Not needed to run the app: the browser scores faces with face-api, and these
+# two scripts only build and train a replacement for that head offline.
+# OpenCV covers all four jobs the extraction needs — decoding MELD's mp4s,
+# detecting faces, cropping, and writing JPEGs — which is why there is no
+# torchvision here to pin against a hand-installed torch build.
+opencv-python>=4.8           # FaceDetectorYN needs >= 4.8
+Pillow>=10.0                 # transformers' image processor reads mean/std through it
+
 # --- optional ---
 yake>=0.4.8                  # better keyword phrases; there's a built-in fallback

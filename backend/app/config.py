@@ -91,6 +91,34 @@ class Settings:
         "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition",
     )
 
+    # Whether the prosody heuristic's reading is allowed into the fused result
+    # when the neural tier is unavailable. Off, on measurement.
+    #
+    # training/eval_voice.py scored it on 2,487 MELD test clips: it predicts
+    # neutral on 100% of them, its per-class numbers are identical to predicting
+    # the class prior, choosing the emotion from its non-neutral mass lands at
+    # 17.3% against a 16.7% chance rate, and using `charge` to tell an emotional
+    # clip from a neutral one gives ROC-AUC 0.474 — no signal, very slightly the
+    # wrong way.
+    #
+    # That alone would argue for ignoring it. What makes it actively harmful is
+    # the shape: it puts a mean 0.787 of its mass on neutral, so it is a *peaked*
+    # distribution, not a flat one. fusion.py weights each channel by the entropy
+    # of its reading, which rewards confidence — so an uninformative channel that
+    # is reliably confident earns real weight and drags every entry toward
+    # neutral. A uniform vector would be harmless; this is not that.
+    #
+    # With this off the channel reports `available: false` and fusion
+    # renormalises over the channels that did say something, exactly as it
+    # already does when no face is visible. The tier that ran is still tagged in
+    # the response, so the heuristic stays visible in diagnostics.
+    #
+    # Set MINDSCAPE_PROSODY_FUSION=true to restore the old behaviour, which is
+    # also how to run the ablation. Note the measurement is on MELD — acted,
+    # laugh-tracked, ~3.5s per clip — and quiet diary audio may suit prosody
+    # better. If you re-measure and it helps there, flip this back.
+    prosody_in_fusion: bool = _env_bool("MINDSCAPE_PROSODY_FUSION", False)
+
     # --- fusion ----------------------------------------------------------
     # Late-fusion weights per modality. Text leads because the MELD-trained head
     # is the best-calibrated of the three; face is a close second but drifts on

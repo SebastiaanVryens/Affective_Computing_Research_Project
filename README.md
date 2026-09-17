@@ -320,6 +320,105 @@ cd backend
 The checkpoint lands in `backend/models/meld-text/` and the backend picks it up on
 next start. `meld_results.json` beside it has the per-class table.
 
+### Training the face model
+
+The face channel is the one piece of this system that was never trained on
+anything: `face.ts` loads face-api's stock expression head, and the complaint
+about it under *Honest limitations* has never had a number attached to it. These
+two scripts fix that, using the half of MELD that `prepare_meld.py` deliberately
+skips — the raw video.
+
+MELD's clips are the only public face data in **MELD's own seven labels on MELD's
+own splits**. That matters more than the extra images: face and text can finally
+be scored on the same held-out utterances, which is what turns the fusion
+argument from a worked example into an ablation.
+
+Download `MELD.Raw.tar.gz` (~10GB) from the [MELD
+repo](https://github.com/declare-lab/MELD) and extract it anywhere — the script
+globs for `dia*_utt*.mp4` rather than assuming a directory layout, because the
+tarball has been repackaged more than once.
+
+```powershell
+cd backend
+.venv\Scripts\python.exe -m pip install opencv-python Pillow
+# dev + test first: that's all the baseline measurement needs
+.venv\Scripts\python.exe -m training.prepare_meld_video --source D:\MELD.Raw `
+    --splits dev,test --save-frames
+.venv\Scripts\python.exe -m training.prepare_meld_video --source D:\MELD.Raw --splits train
+```
+
+#### Measure before you train
+
+Run this first. It answers a question training cannot: whether the stock head's
+problem is **accuracy** or **calibration** — which have very different fixes, and
+only one of them is expensive.
+
+```powershell
+cd frontend
+node scripts/eval-faceapi.mjs --manifest ..\data\meld_faces\dev_frames.csv `
+    --root ..\data\meld_faces --out ..\data\meld_faces\faceapi_dev.json
+node scripts/eval-faceapi.mjs --manifest ..\data\meld_faces\test_frames.csv `
+    --root ..\data\meld_faces --out ..\data\meld_faces\faceapi_test.json
+
+cd ..\backend
+.venv\Scripts\python.exe -m training.eval_face_baseline
+```
+
+`eval-faceapi.mjs` runs the **same three nets from the same `public/models`
+weights the browser fetches**, with `face.ts`'s own `inputSize` and 0.35 score
+floor, on whole frames so face-api does its own detection. Scoring it only on
+frames *our* detector already approved would hand it a pre-filtered test set and
+call the comparison fair. It runs on the WASM backend — slower than
+`tfjs-node`, numerically identical, and no native toolchain on Windows.
+
+`eval_face_baseline.py` reports coverage, F1, ECE with a temperature fitted on
+dev, a confusion matrix, and a **neutral-drift test** that checks the README's
+actual claim: given a frame MELD labels neutral, where does face-api put its
+probability mass? An inaccurate head spreads errors around; a biased one puts
+them somewhere specific.
+
+If that comes back *accurate but overconfident*, the fix is one scalar — no
+training, no new weights in the browser — and `fusion.py`'s entropy weighting
+stops handing the face channel weight it hasn't earned. Take that either way.
+
+#### Then train
+
+```powershell
+.venv\Scripts\python.exe -m training.train_face --device cuda --epochs 8
+```
+
+Extraction samples 8 frames from the middle of each clip, detects faces with
+YuNet, links them into tracks and keeps the one that is large, central and
+persistent — the speaker, usually. It writes `data/meld_faces/` plus a per-class
+**coverage table**, which is a result rather than a log line: clips where no face
+is found are dropped, that loss is not uniform across emotions, and a face
+channel that sees disgust less often than joy has a bias no amount of training
+removes.
+
+Training reports four numbers instead of one, for reasons specific to how the
+face vector gets consumed:
+
+- **frame-level** is comparable to other FER work; **clip-level** mean-pools the
+  frames of an utterance, which is what `face.ts` actually does before fusion
+  sees anything. The gap between them is itself a finding.
+- **ECE, before and after temperature scaling.** `fusion.py` weights each channel
+  by the entropy of its distribution, so a head that is confidently wrong doesn't
+  just add noise — it *wins weight* while doing it. A model with better top-1 and
+  worse calibration would make the fused reading worse. The fitted temperature is
+  saved beside the weights; inference has to apply it.
+- **A prior baseline.** Neutral is half of MELD, so the accuracy floor is
+  deceptively high. A face model that fails to beat the prior on macro-F1 has
+  learned nothing the fusion layer needs.
+
+`train_face.py` also exports `face-emotion.onnx` with the softmax inside the
+graph, plus a `preprocess.json` recording the exact crop/resize/normalise
+recipe — that pairing is what keeps a browser-side head from repeating the
+train/serve mismatch that once cost the text model half its confidence.
+
+**Nothing serves this yet.** `face.ts` still loads face-api. Measure the trained
+head against that baseline before rewiring the capture path — the honest
+comparison is the point, and swapping first would throw it away.
+
 ---
 
 ## Results
@@ -444,6 +543,174 @@ turn" would be worse than no context.
 you felt X"* — but is not currently loadable from the HuggingFace Hub under any of
 the usual identifiers. Worth sourcing separately.
 
+### Capping the auxiliary corpora by class, not proportionally
+
+`--cap-mode per-class` keeps every example of the rare classes and takes the cut
+out of joy and neutral instead. The original proportional cap preserved each
+source corpus's balance, which sounds neutral and isn't: these corpora exist to
+feed the classes MELD starves, and trimming them proportionally trimmed the rare
+classes too. DailyDialog went 87k → 25k and took fear down to **93 examples**,
+fewer than MELD's own fear count, for a corpus added to fix exactly that.
+
+Selection is on dev; test is quoted once for the chosen run.
+
+| Run | Aux corpora | dev wF1 | test wF1 | test macro | fear F1 | disgust F1 |
+|---|---|---|---|---|---|---|
+| C (previous) | proportional, go+dd | — | 0.6068 | 0.4602 | 0.212 | 0.269 |
+| D | per-class, go+dd | 0.5987 | 0.6180 | 0.4620 | 0.205 | 0.251 |
+| **E (shipped)** | per-class, go+dd+tweets | **0.6031** | **0.6291** | 0.4691 | 0.205 | 0.312 |
+
+**More data does not fix fear, and that is the finding.** Fear's auxiliary
+examples went 435 → 652 → **2,585** across these three runs — 5.9× — and its F1
+went 0.212 → 0.205 → 0.205. The class weighting is already pushing hard on it
+(weight 2.69). MELD's fear is acted sitcom panic across 50 test examples; the
+tweets corpus's fear is *"i feel anxious"*. Same label, different phenomenon —
+the same domain gap measured in B→C, reappearing **inside a single class**, where
+more data cannot cross it.
+
+Read the +0.022 headline gain with that in mind: macro-F1 moved only +0.009, so
+almost all of it is neutral improving (0.725 → 0.776). Single seed, and disgust
+swung 0.251 → 0.312 between two runs with *identical* disgust data, so treat any
+difference under ~0.05 at low support as noise.
+
+### The face channel, measured
+
+Until now this channel had a sentence in *Honest limitations* and no number. It
+has both halves of a comparison now: face-api's stock head, and a MobileNetV2
+head trained on MELD's own video via `prepare_meld_video.py` + `train_face.py`.
+Same clips, same labels, same splits, so the difference is the model.
+
+MELD test, **clip-level** (frames of an utterance mean-pooled, which is what
+`face.ts` does before fusion sees anything):
+
+| | weighted-F1 | macro-F1 | accuracy | ECE | fitted T |
+|---|---|---|---|---|---|
+| face-api (shipped) | 0.3150 | **0.1651** | 0.3286 | 0.3451 | 7.12 |
+| trained, unweighted | **0.3462** | 0.1466 | **0.4206** | **0.0980** | 2.25 |
+| trained, class-weighted | 0.2675 | 0.1517 | 0.2450 | 0.1145 | 4.48 |
+| predict the class prior | 0.3128 | 0.0928 | 0.4813 | 0.0054 | — |
+
+**We did not ship the trained head.** It wins weighted-F1 and accuracy, but it
+loses macro-F1 — and this project's own argument for class-weighted text training
+says macro is the metric a diary needs: *pushed to risk guessing rare emotions
+instead of retreating to neutral*. The trained head's advantage comes almost
+entirely from predicting neutral better (recall 0.795), which is the retreat the
+text pipeline was designed to avoid. It is also trained on acted sitcom
+expression under TV lighting, which is the B→C domain gap again.
+
+Three things here are worth more than the ranking:
+
+**Face-only recognition on MELD saturates around 0.31–0.35 weighted-F1.** Three
+independent attempts land in that band, and none beats the class prior on
+accuracy. The earlier "face-api is weak" reading was wrong: it is close to the
+ceiling of the task as MELD poses it.
+
+**Fear and disgust are unreachable — 0.000 F1 for *both* models**, on 45 and 63
+test clips. Not a tuning problem.
+
+**Half the frames never reach the classifier.** face-api detects a face in only
+**48.5%** of test frames (9,976/20,568), while YuNet finds a speaker in 94% of the
+same clips. `sweep-detector.mjs` shows why, and it is almost purely apparent face
+size:
+
+| face width (% of frame) | frames | face-api finds it |
+|---|---|---|
+| 0–10% | 3,186 | ~4% |
+| 10–15% | 4,193 | 23.6% |
+| 15–20% | 7,405 | 79.3% |
+| 20–30% | 1,999 | 91.3% |
+
+There is a cliff between 10% and 20% of frame width, and MELD's wide two-shots sit
+on it. **This is a property of the benchmark, not of the app**: someone at a
+laptop spans 25–40% of the frame and lands in the 91% band. It caps any face-only
+result on MELD, which is a limitation of the *evaluation*.
+
+Finally, the README's long-standing claim is now quantified. On frames MELD labels
+neutral, face-api puts p=0.218 on sadness and **sadness outranks neutral on 31.7%
+of them**.
+
+### The voice fallback carries no signal
+
+`training/eval_voice.py` scored the prosody heuristic on 2,487 MELD test clips.
+
+- It predicts **neutral on 100%** of them. Its per-class numbers are identical to
+  predicting the class prior.
+- Choosing the emotion from its non-neutral mass: **17.3%** against a 16.7%
+  chance rate.
+- Using `charge` (1 − p(neutral)) to tell an emotional clip from a neutral one:
+  **ROC-AUC 0.474** — no signal, marginally the wrong way.
+
+It is not a constant function (224 distinct vectors in 237 clips), but the
+variation carries nothing. What makes it *harmful* rather than merely useless is
+the shape: a mean **0.787** of its mass sits on neutral, so it is a peaked
+distribution, and `fusion.py` weights by entropy — which rewards confidence. An
+uninformative channel that is reliably confident earns real weight and drags every
+entry toward neutral. With the measured mean vector fused against a weak text
+reading of joy, the entry flips to **neutral at 0.719**.
+
+So the prosody tier no longer votes: `predict()` returns `None`, fusion marks the
+channel `available: false` and renormalises, and the source tag still reports
+which tier ran. `MINDSCAPE_PROSODY_FUSION=true` restores the old behaviour and is
+how to run the ablation. Note prosody returns a *uniform* vector on pure tones —
+it is harmful specifically when fed speech.
+
+### The neural voice tier was never actually running
+
+The default checkpoint, `ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition`,
+was saved under **transformers 4.8.2** with the old `Wav2Vec2ClassificationHead`
+layout (`classifier.dense`, `classifier.output`). Current transformers builds
+`projector` + `classifier` instead, so **every head tensor fails to match, is
+discarded, and is replaced with a random initialisation.** The 422 wav2vec2
+feature-extractor weights load fine; the part that maps features to emotions does
+not. `transformers` prints a warning and returns the model. Nothing raises.
+
+This is the same failure class the *Train/serve format must match* note already
+describes — a silent quality loss with no error — and `audio_model.py` now refuses
+any checkpoint whose `classifier`/`projector` tensors were newly initialised,
+naming the cause instead of serving noise.
+
+### A replacement that loads, and what it took to make it usable
+
+`firdhokk/speech-emotion-recognition-with-facebook-wav2vec2-large-xlsr-53` loads
+cleanly (426/426 weights) and emits **exactly MELD's seven classes**, so the
+`calm` → `neutral` collapse disappears: the mapping is one-to-one.
+
+Out of the box it scores **0.098** weighted-F1 — six times worse than predicting
+the class prior. That number is misleading. The model predicts neutral on **0.8%**
+of clips against a 48% true rate, with a mean 0.010 of its mass on the class: it
+was trained on acted speech where nearly every clip is expressive. Its *ranking*
+is sound, its *operating point* is not.
+
+Restricted to genuinely non-neutral clips it picks the right emotion **27.2%** of
+the time against 16.7% chance (joy 34%, anger 38%, surprise 30%). The prosody
+heuristic scores 17.3% on that same subproblem — chance. One tier has signal; the
+other does not.
+
+A temperature cannot fix a prior mismatch, because it scales every class equally.
+A per-class bias fitted on dev can (`fit_prior_correction`), and MELD test then
+gives:
+
+| | weighted-F1 | macro-F1 | accuracy | ECE |
+|---|---|---|---|---|
+| class prior | 0.3115 | 0.0927 | 0.4801 | 0.000 |
+| prosody heuristic | 0.3115 | 0.0927 | 0.4801 | 0.320 |
+| wav2vec2, as loaded | 0.0981 | 0.1090 | 0.1448 | 0.757 |
+| **wav2vec2, prior-corrected** | 0.2954 | **0.1542** | 0.2891 | 0.417 |
+
+The fitted bias is **neutral +6.71**, joy −4.95, anger −3.57 — the size of the
+correction is itself the evidence.
+
+**Macro-F1 0.1542 against the prior's 0.0927 is the result**: on the metric this
+project argues a diary needs, the voice channel carries signal for the first time,
+in the same band as the face channel (0.147–0.165).
+
+**It is still not shipped.** ECE 0.417 means it is badly calibrated, and fusion
+weights by entropy — enabling it now would repeat the prosody mistake with a
+better model. Two things are needed first: *joint* vector scaling rather than a
+temperature and a bias fitted independently (doing both separately double-corrects
+and collapses the model to always-neutral), and a refit on diary audio rather than
+MELD, since the bias encodes MELD's 48% neutral rate and a diary's is unknown.
+
 ---
 
 ## The research angles
@@ -556,8 +823,38 @@ leader is reported as that emotion rather than discarded as "unclear".
   (acted, not conversational) and its "calm" class has no MELD counterpart. When
   disabled, the fallback is a **prosody heuristic**, not a classifier — don't report
   it as one. The API tags which tier ran (`"source": "prosody-heuristic"`).
+  Measured on MELD it carries **no signal at all** (neutral on 100% of clips,
+  `charge` ROC-AUC 0.474), so it no longer contributes to fusion — see *The voice
+  fallback carries no signal*.
+- **The neural voice tier has never worked.** Its default checkpoint loads with a
+  randomly initialised classification head (see *The neural voice tier was never
+  actually running*), so any voice reading the app has ever produced came either
+  from that random head or from the signal-free heuristic. `audio_model.py` now
+  refuses such a checkpoint. A working replacement is identified and measured but
+  **not enabled**: it needs joint calibration and an in-domain refit first.
 - **face-api's expression net** is trained on posed-ish data and reads a resting
-  face as slightly sad. The entropy weighting mitigates this, but the bias is real.
+  face as slightly sad. Now quantified: on true-neutral MELD frames it puts
+  p=0.218 on sadness, and sadness outranks neutral on **31.7%** of them. It is
+  also badly calibrated — ECE 0.514 frame-level, fitted temperature **7.12** —
+  which matters because the entropy weighting *rewards* confidence rather than
+  mitigating it, so this channel has been outvoting the better-calibrated text
+  model on certainty it has not earned. A trained replacement exists
+  (`train_face.py`) and was **not** adopted: it loses macro-F1, which is the
+  metric this project argues a diary needs.
+- **The face temperature is not applied at runtime.** T = 7.12 was fitted on
+  MELD, where face-api is confidently *wrong*; on easy webcam faces it may be
+  confidently right, and that temperature would over-flatten a good signal.
+  Refitting on in-domain recordings is the prerequisite for shipping it.
+- **Face labels from MELD video are weak by construction.** An utterance carries
+  one emotion, and `prepare_meld_video.py` stamps it onto every sampled frame, so
+  a neutral-looking frame inside an angry utterance is simply mislabelled.
+  Mid-clip sampling and clip-level pooling reduce the damage; they don't remove
+  it. Speaker selection is a geometric heuristic on a multi-party sitcom, and
+  `rival_faces` in the manifest records how often the choice was close —
+  `--unambiguous` trains on the clean subset, which is the ablation that says
+  whether it mattered. Friends is also acted: *conversational* rather than
+  *posed-peak*, which is the specific failure being corrected, but not
+  spontaneous affect.
 - **Fear at F1 0.212** is weak — 50 test examples against 1,256 neutral.
 - **Train/serve format must match.** The checkpoint trains on
   `"prev </s> prev </s> current"`; `app/text_model.py` reads `context_turns` out of
@@ -576,6 +873,7 @@ leader is reported as that emotion rather than discarded as "unclear".
 | `MINDSCAPE_DEVICE` | `cpu` | `cuda` or `auto` |
 | `MINDSCAPE_WHISPER_MODEL` | `base.en` | `small.en` is better, ~3× slower |
 | `MINDSCAPE_VOICE_EMOTION` | `true` | `false` drops to the prosody heuristic |
+| `MINDSCAPE_PROSODY_FUSION` | `false` | let the prosody heuristic vote in fusion. Off on measurement — it carries no signal but is confidently neutral, and entropy weighting rewards that. `true` restores the old behaviour and runs the ablation |
 | `MINDSCAPE_W_TEXT` / `_FACE` / `_VOICE` | `0.5` / `0.3` / `0.2` | fusion weights |
 | `MINDSCAPE_INDEPENDENCE` | `0.5` | cross-modal reinforcement; `0` = plain averaging |
 | `MINDSCAPE_ENSEMBLE_TEXT` | `true` | blend MELD head with general-domain model |
@@ -593,6 +891,9 @@ frontend/src/
     face.ts            face-api loop, 8 Hz, in-browser, timestamped
     mic.ts             audio level (60 Hz) + two-recorder chunking
     session.ts         orchestrates live / streamed / commit
+  ../scripts/
+    fetch-models.mjs   copies face-api weights out of node_modules
+    eval-faceapi.mjs   scores that stock head in Node, mirroring face.ts exactly
   world/
     scene.ts           camera, render loop, bloom
     atmosphere.ts      sky shader, lights, motes — the fast layer
@@ -618,6 +919,9 @@ backend/training/
   prepare_meld.py      fetch + sanity-check the CSVs
   prepare_corpora.py   map GoEmotions / DailyDialog into MELD's labels
   train_text.py        fine-tune, evaluate, save
+  prepare_meld_video.py  MELD's raw video -> speaker face crops (+ whole frames)
+  eval_face_baseline.py  score face-api's stock head: F1, ECE, neutral drift
+  train_face.py        fine-tune the face head, calibrate, export ONNX
   eval_diary.py        the domain-shift measurement
   diary_probe.py       the 47-sentence probe set
   smoke_test.py        dependency-light checks for the fusion arithmetic

@@ -265,8 +265,12 @@ async function main(): Promise<void> {
   try {
     await face.start();
   } catch (error) {
-    console.warn('Camera unavailable:', error);
-    hud.toast('No camera — the world will respond to your voice and words only', 5500);
+    // face.start() classifies the cause and records it on its status, which the
+    // Signals panel shows. Repeat it here rather than the old generic "No
+    // camera", which sent people to check a webcam that was working fine.
+    const reason = face.getStatus().error ?? (error instanceof Error ? error.message : String(error));
+    console.warn('Face capture unavailable:', reason, error);
+    hud.toast(`Face channel off — ${reason}`, 9000);
   }
 
   // -- backend health --------------------------------------------------
@@ -318,10 +322,27 @@ async function main(): Promise<void> {
 
   // Stopping the camera on unload avoids leaving the webcam light on if the tab
   // is closed mid-session.
-  window.addEventListener('beforeunload', () => {
+  //
+  // `pagehide` as well as `beforeunload`: the latter is skipped entirely when a
+  // page goes into the back/forward cache, which would leave the webcam light on
+  // after navigating away.
+  const release = (): void => {
     face.dispose();
     world.stop();
-  });
+  };
+  window.addEventListener('beforeunload', release);
+  window.addEventListener('pagehide', release);
+
+  // Hot reload is the case neither of those covers, and it is the one that bites
+  // during development: Vite swaps this module without unloading the page, so no
+  // unload event fires, the previous FaceCapture keeps its MediaStream, and the
+  // replacement module's getUserMedia fails with NotReadableError — the webcam is
+  // genuinely in use, by the dead copy of this module. It then looks exactly like
+  // an external app holding the camera, and survives every edit until a full
+  // reload.
+  if (import.meta.hot) {
+    import.meta.hot.dispose(release);
+  }
 
   // Expose a little for console debugging during development.
   if (import.meta.env.DEV) {

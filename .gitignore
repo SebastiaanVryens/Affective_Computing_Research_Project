@@ -11,11 +11,13 @@ dist/
 frontend/public/models/
 
 # Datasets and trained checkpoints — large, and all regenerable:
-#   data/meld/      python -m training.prepare_meld
-#   data/corpora/   python -m training.prepare_corpora
-#   backend/models/ python -m training.train_text
+#   data/meld/        python -m training.prepare_meld
+#   data/corpora/     python -m training.prepare_corpora
+#   data/meld_faces/  python -m training.prepare_meld_video
+#   backend/models/   python -m training.train_text / train_face
 data/meld/
 data/corpora/
+data/meld_faces/
 backend/models/
 backend/checkpoints/
 
