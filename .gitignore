@@ -18,8 +18,20 @@ frontend/public/models/
 data/meld/
 data/corpora/
 data/meld_faces/
+#   data/mosi_faces/  python -m training.prepare_mosi
+#   data/fusion/      python -m training.dump_channels{,_mosi}
+#   data/meld_voice/  python -m training.eval_voice
+data/mosi_faces/
+data/fusion/
+data/meld_voice/
 backend/models/
 backend/checkpoints/
+
+# Corpus snapshots. data/corpora_perclass/ and data/corpora_proportional/ were
+# committed before this rule existed (~94k lines of regenerable CSV) and stay
+# tracked so history is not rewritten; `git rm --cached` them if the repo size
+# ever matters. Both are reproducible with training/prepare_corpora.py --cap-mode.
+data/corpora_*/
 
 # Evaluation output (training/eval_diary.py --json)
 data/*.json

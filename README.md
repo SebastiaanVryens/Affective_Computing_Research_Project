@@ -144,6 +144,48 @@ Any entry can be promoted to a **core memory**, lifting it onto a glowing ring a
 the centre. That's a deliberate user action, not an automatic threshold — the app
 can tell which moment was most *intense*, but only you know which was *formative*.
 
+**An orb's size and glow carry how loudly it was spoken.** An animated entry
+swells and brightens; a quiet late-night one stays small and dim.
+
+This is the honest replacement for what the voice channel was supposed to do.
+Emotion-from-tone was meant to catch the thing words cannot — *"I'm fine"* said
+flatly and *"I'm fine"* said brightly are the same transcript — and measured on
+two corpora it does not deliver: it scores at the class prior and drags fusion
+down. Loudness delivers exactly that distinction, and has the advantage of being
+**measured rather than inferred**. An RMS meter cannot be confidently wrong the
+way a classifier can. So the world shows vocal intensity directly, labelled as
+what it is, instead of a model's guess about what that intensity meant.
+
+**Ranked against your own diary, never an absolute scale.** A headset and a
+laptop array microphone disagree by more than a whisper differs from a shout, and
+leaning closer to the desk changes it again — an absolute mapping would mostly
+encode which machine you sat at. Each entry is scored by its percentile within
+your own history, so your loudest entry is the loudest whatever your hardware
+does, and the spread fills the visual range whether you are a quiet talker or a
+loud one.
+
+Four details that matter more than they look:
+
+* **Raw values are stored; ranking happens at read time.** Normalising on save
+  would freeze each entry against whatever history existed that day.
+* **Only frames above the noise floor count**, so a long thinking pause cannot
+  quietly average an entry down towards silence.
+* **The effect is multiplicative and centred on 1**, so it modulates the existing
+  meaning (certainty, duration) rather than competing with it — and an entry with
+  no measurement keeps exactly the size it had. A diary written before this
+  existed looks unchanged, instead of every orb silently becoming "average".
+* **Size and glow say the same thing deliberately.** One cue is ambiguous against
+  the orb's own emotion colour; two agreeing cues read instantly.
+
+Promotion to a core memory preserves both, which needed care: those are separate
+meshes whose scale and emissive intensity are rewritten every frame, so the vocal
+factors ride in `userData` and are re-applied in the update loop rather than baked
+in once. Without that, promoting a loud entry would visibly shrink and dim it.
+
+Spectral brightness — a raised, tense voice against a calm one — is captured and
+ranked alongside, and currently unused. It is a second axis if loud-and-tense
+should ever look different from loud-and-warm.
+
 **History** shows day / week / month dots, each a pie sliced by that period's
 emotion proportions. Days you didn't write show as hollow rings, because the gaps
 are part of the record.
@@ -711,6 +753,118 @@ temperature and a bias fitted independently (doing both separately double-correc
 and collapses the model to always-neutral), and a refit on diary audio rather than
 MELD, since the bias encodes MELD's 48% neutral rate and a diary's is unknown.
 
+### Does fusing the channels actually help? No — and that is the main result
+
+Every channel above was measured alone. The combination — the thing this project
+is *for* — had never been. `training/dump_channels.py` writes each channel's
+per-utterance vector and `training/eval_fusion.py` scores every subset, sweeps
+the independence knob, and tunes the weights on dev.
+
+**MELD test**, weighted-F1, calibrated on dev:
+
+| | wF1 | macro-F1 |
+|---|---|---|
+| **text alone** | **0.6217** | **0.4405** |
+| text + face | 0.6114 | 0.4202 |
+| text + voice | 0.6107 | 0.4237 |
+| text + face + voice | 0.6005 | 0.3991 |
+| class prior | 0.3127 | 0.0928 |
+
+Every channel added makes it worse, monotonically, and the dev-chosen weight
+sweep independently zeroed the face channel. On emotional (non-neutral)
+utterances it is worse still: adding both channels drops the rate at which the
+system says *anything* other than neutral from 69.6% to **55.4%** — the retreat
+to neutral this project was built to avoid.
+
+The obvious objection is that MELD is a hostile test: face and voice both score
+at the class prior there, and blending a signal-free channel into a good one can
+only dilute it.
+
+**So the same experiment was run on CMU-MOSI** — ~2,200 YouTube monologues, one
+speaker, close to camera, unscripted. Structurally the diary this app is for.
+`training/prepare_mosi.py` and `training/dump_channels_mosi.py` reuse the same
+detector, crops, models and fusion code; only the corpus changes. MOSI annotates
+sentiment, so scoring collapses seven emotions to three using
+`app/emotions.py`'s own `SENTIMENT_OF` table — fusion still runs in seven-space
+exactly as in production, and no new mapping is invented.
+
+The domain difference is stark, and it confirms the face-size diagnosis exactly:
+
+| | MELD | CMU-MOSI |
+|---|---|---|
+| face-api frame detection | 48.5% | **99.4%** |
+| YuNet speaker coverage | 93.4% | 99.95% |
+| neutral share of labels | 48% | 4% |
+| face alone, vs class prior | +0.003 | **+0.104** |
+
+**On MOSI the channels work** — face beats the prior by 10 points of weighted-F1
+and 11 of macro, where on MELD it beat it by nothing. And fusion *still* loses:
+text alone 0.7582, text+face 0.7120, all three 0.6565.
+
+An oracle weight sweep, tuned directly on test, puts fusion's absolute ceiling at
+**0.7601 — +0.002 over text alone**, at weights of 0.9 text / 0.1 face / 0.0
+voice.
+
+#### The information is there; the rule cannot reach it
+
+This is not "the auxiliary channels are useless". On MOSI:
+
+* text is wrong on 22.7% of test clips
+* on those clips, face or voice is right **49.4%** of the time
+* oracle per-clip channel selection scores **0.885** against text's 0.773
+
+That is **+11.2 points** of genuinely complementary information. A fixed weight
+vector cannot reach it, because it blends every channel on every clip rather than
+deciding *when* to listen.
+
+So `training/eval_stacking.py` replaces the hand-specified rule with a learned
+one — still late fusion, still combining only channel outputs, but the combiner
+is fitted rather than asserted. Features are each channel's seven probabilities,
+its certainty, and an availability flag.
+
+| combiner | MOSI test wF1 | vs text |
+|---|---|---|
+| weighted averaging (oracle weights) | 0.7601 | +0.002 |
+| logistic stacker | 0.7630 | +0.005 |
+| MLP (32) | 0.7630 | +0.005 |
+| RandomForest (400) | 0.7697 | +0.012 |
+| HistGradientBoosting | 0.7508 | −0.007 |
+
+The best recovers about **10% of the available headroom**, and the logistic
+stacker's gain decomposes to **+0.0028 attributable to face and voice** — the
+rest is refitting on text's own output. (Treat the RandomForest number with
+suspicion: it scored *higher* on test than on the 229-clip dev split used to
+choose it.)
+
+**The claim that survives**, on two corpora with opposite channel quality:
+
+> Late fusion does not improve on the strongest single channel. On MELD the
+> auxiliary channels carry no signal; on MOSI they carry real signal and are
+> demonstrably complementary, yet no combiner tested — fixed-weight,
+> oracle-weighted, logistic, MLP or tree-ensemble — recovers more than a point of
+> it. The complementary information exists at the utterance level but is not
+> recoverable from calibrated channel posteriors.
+
+#### What changed as a result
+
+`MINDSCAPE_INDEPENDENCE` now defaults to **0**. The sweep is monotonic on both
+corpora: on MOSI, 0.744 at independence 0 falling to 0.644 at 1.0, with the old
+0.5 default at 0.657. Cross-modal reinforcement is a good argument that the data
+does not support — it holds only when channels are of comparable quality, and a
+weak channel agreeing with a strong one adds confidence without adding
+information.
+
+Fusion weights move from 0.5 / 0.3 / 0.2 to **0.8 / 0.15 / 0.05**. The old
+defaults were measurably worse than serving text alone. Both sweeps put the true
+optimum at 0.9 / 0.1 / 0.0; the shipped defaults stop short of a hard zero
+deliberately, since that would permanently silence a channel whose model is still
+being replaced.
+
+None of this touches the **live** face channel. `mood.pushFace()` drives the sky
+and particles at 8 Hz, is 99.4% reliable on webcam-framed video, and is doing a
+different job from classifying a committed entry. The measurements above condemn
+only the second.
+
 ---
 
 ## The research angles
@@ -874,8 +1028,8 @@ leader is reported as that emotion rather than discarded as "unclear".
 | `MINDSCAPE_WHISPER_MODEL` | `base.en` | `small.en` is better, ~3× slower |
 | `MINDSCAPE_VOICE_EMOTION` | `true` | `false` drops to the prosody heuristic |
 | `MINDSCAPE_PROSODY_FUSION` | `false` | let the prosody heuristic vote in fusion. Off on measurement — it carries no signal but is confidently neutral, and entropy weighting rewards that. `true` restores the old behaviour and runs the ablation |
-| `MINDSCAPE_W_TEXT` / `_FACE` / `_VOICE` | `0.5` / `0.3` / `0.2` | fusion weights |
-| `MINDSCAPE_INDEPENDENCE` | `0.5` | cross-modal reinforcement; `0` = plain averaging |
+| `MINDSCAPE_W_TEXT` / `_FACE` / `_VOICE` | `0.8` / `0.15` / `0.05` | fusion weights, swept on MELD and MOSI. The old 0.5/0.3/0.2 scored below serving text alone |
+| `MINDSCAPE_INDEPENDENCE` | `0` | cross-modal reinforcement; `0` = plain averaging. Was 0.5; the sweep on both corpora is monotonic and every step above 0 costs accuracy |
 | `MINDSCAPE_ENSEMBLE_TEXT` | `true` | blend MELD head with general-domain model |
 | `MINDSCAPE_ENSEMBLE_W` | `0.5` | weight on the MELD head within that blend |
 
@@ -889,7 +1043,8 @@ frontend/src/
   capture/
     mood.ts            live mood bus — the seam between capture and world
     face.ts            face-api loop, 8 Hz, in-browser, timestamped
-    mic.ts             audio level (60 Hz) + two-recorder chunking
+    mic.ts             audio level (60 Hz) + two-recorder chunking, and the
+                       per-session loudness a saved entry carries
     session.ts         orchestrates live / streamed / commit
   ../scripts/
     fetch-models.mjs   copies face-api weights out of node_modules
@@ -902,6 +1057,7 @@ frontend/src/
     keywords.ts        floating words
   state/
     db.ts              IndexedDB, export/import
+    vocals.ts          per-diary loudness ranking -> orb size and glow
     history.ts         day/week/month rollups
     report.ts          the clinician summary's numbers, each with its sample
     lexicon.ts         phrase table per subject — quotes hits, scores nothing
@@ -919,6 +1075,11 @@ backend/training/
   prepare_meld.py      fetch + sanity-check the CSVs
   prepare_corpora.py   map GoEmotions / DailyDialog into MELD's labels
   train_text.py        fine-tune, evaluate, save
+  dump_channels.py     per-utterance vectors from every channel (MELD)
+  prepare_mosi.py      CMU-MOSI face crops, reusing the MELD extractor
+  dump_channels_mosi.py  the same dump for CMU-MOSI
+  eval_fusion.py       subsets, independence sweep, weight sweep
+  eval_stacking.py     learned late fusion, the control for eval_fusion
   prepare_meld_video.py  MELD's raw video -> speaker face crops (+ whole frames)
   eval_face_baseline.py  score face-api's stock head: F1, ECE, neutral drift
   train_face.py        fine-tune the face head, calibrate, export ONNX

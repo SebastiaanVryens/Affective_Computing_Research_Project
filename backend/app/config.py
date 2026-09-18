@@ -123,9 +123,31 @@ class Settings:
     # Late-fusion weights per modality. Text leads because the MELD-trained head
     # is the best-calibrated of the three; face is a close second but drifts on
     # a resting face; voice is noisiest, so it mostly breaks ties.
-    weight_text: float = _env_float("MINDSCAPE_W_TEXT", 0.5)
-    weight_face: float = _env_float("MINDSCAPE_W_FACE", 0.3)
-    weight_voice: float = _env_float("MINDSCAPE_W_VOICE", 0.2)
+    # Measured, not assumed. training/eval_fusion.py swept these on MELD and
+    # CMU-MOSI; both corpora put the optimum at roughly 0.9 text / 0.1 face /
+    # 0.0 voice, and both put the *shipped* 0.5/0.3/0.2 well below serving text
+    # alone (MELD -0.021 wF1, MOSI -0.102).
+    #
+    # The reason is unequal channel quality rather than anything wrong with the
+    # fusion arithmetic. On MOSI, text scores 0.758 weighted-F1, face 0.497 and
+    # voice 0.413; giving half the mass to channels roughly half as good dilutes
+    # the one that is right. Entropy weighting does not rescue it, because after
+    # calibration the weak channels are *well* calibrated — confidently mediocre
+    # is exactly what a certainty-weighted pool rewards.
+    #
+    # Note this governs the committed entry only. The face channel still drives
+    # the live world through mood.pushFace(), where it is 99.4% reliable on
+    # webcam-style video and doing a different job entirely.
+    #
+    # Both sweeps actually put the optimum at 0.9 / 0.1 / 0.0. These defaults
+    # stop short of that deliberately: a hard zero would make a channel
+    # structurally unable to contribute no matter what model is behind it, which
+    # is a permanent answer to a question that is still open — the voice channel
+    # is already silenced at load time, and a better SER checkpoint is a known
+    # next step. Set MINDSCAPE_W_VOICE=0 to reproduce the swept optimum.
+    weight_text: float = _env_float("MINDSCAPE_W_TEXT", 0.8)
+    weight_face: float = _env_float("MINDSCAPE_W_FACE", 0.15)
+    weight_voice: float = _env_float("MINDSCAPE_W_VOICE", 0.05)
 
     # How independent the three channels are treated as being, in [0, 1].
     #
@@ -136,7 +158,18 @@ class Settings:
     #       one person in one moment share a cause and are plainly correlated.
     # 0.5 = the default. Agreement is rewarded and disagreement penalised, at
     #       roughly half the strength true independence would imply.
-    fusion_independence: float = _env_float("MINDSCAPE_INDEPENDENCE", 0.5)
+    #
+    # Now measured, and the answer is 0. The sweep in training/eval_fusion.py is
+    # monotonic on both corpora — every step away from plain weighted averaging
+    # costs accuracy. On MOSI: 0.744 at independence 0, falling to 0.644 at 1.0,
+    # with the old 0.5 default sitting at 0.657. On MELD the spread is smaller
+    # (0.0007) but points the same way.
+    #
+    # The reasoning behind the default was that agreeing channels should sharpen
+    # each other. It holds only when the channels are of comparable quality; here
+    # a weak channel agreeing with a strong one adds confidence without adding
+    # information, and a weak channel disagreeing destroys it.
+    fusion_independence: float = _env_float("MINDSCAPE_INDEPENDENCE", 0.0)
 
     # --- server ----------------------------------------------------------
     cors_origins: list[str] = field(

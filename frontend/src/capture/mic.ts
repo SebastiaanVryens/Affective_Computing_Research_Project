@@ -68,6 +68,22 @@ export class MicCapture {
   private smoothedLevel = 0;
   private noiseFloor = INITIAL_NOISE_FLOOR;
 
+  /**
+   * How loudly this session was actually spoken, accumulated per frame.
+   *
+   * This is the one thing the audio can report that cannot be wrong. The SER
+   * model *guesses* an emotion from tone and, measured, guesses badly; loudness
+   * is simply measured. It also carries something the words cannot: "I'm fine"
+   * said quietly and "I'm fine" said loudly are the same transcript.
+   *
+   * Only frames above the noise floor count, so a long thinking pause does not
+   * quietly average the entry down towards silence.
+   */
+  private vocalSum = 0;
+  private vocalPeak = 0;
+  private brightnessSum = 0;
+  private vocalFrames = 0;
+
   /** Data from the continuous recorder, assembled on stop. */
   private chunks: Blob[] = [];
   private startedAt = 0;
@@ -107,6 +123,11 @@ export class MicCapture {
     this.mimeType = pickMimeType();
     this.chunks = [];
     this.startedAt = performance.now();
+    // Per-session, so a second entry never inherits the first one's loudness.
+    this.vocalSum = 0;
+    this.vocalPeak = 0;
+    this.brightnessSum = 0;
+    this.vocalFrames = 0;
 
     // Continuous recorder — the authoritative recording. No timeslice, so it
     // hands everything over in one seamless piece when stopped.
@@ -178,6 +199,31 @@ export class MicCapture {
   /** The whole session as one blob, for the final commit pass. */
   fullRecording(): Blob {
     return new Blob(this.chunks, { type: this.mimeType || 'audio/webm' });
+  }
+
+  /**
+   * Vocal intensity for the session, or null if nobody spoke.
+   *
+   * Absolute levels are meaningless across machines — a headset mic and a laptop
+   * array microphone disagree by more than a whisper differs from a shout — so
+   * these are stored raw and normalised against the diary's own history at
+   * render time. "Loud" only means anything relative to how *you* usually sound.
+   */
+  sessionVocals(): {
+    mean: number;
+    peak: number;
+    brightness: number;
+    speakingSeconds: number;
+  } | null {
+    if (this.vocalFrames === 0) return null;
+    return {
+      mean: this.vocalSum / this.vocalFrames,
+      peak: this.vocalPeak,
+      brightness: this.brightnessSum / this.vocalFrames,
+      // Frames are requestAnimationFrame ticks, so this is approximate and
+      // only ever used to discard entries too short to characterise.
+      speakingSeconds: this.vocalFrames / 60,
+    };
   }
 
   elapsedMs(): number {
@@ -252,13 +298,19 @@ export class MicCapture {
     }
     const centroid = total > 0 ? weighted / total / this.freqBuffer.length : 0;
 
-    this.options.onLevel?.({
-      // Compressed with a root curve: speech RMS lives in a narrow low band and
-      // a linear map would leave the world barely moving at normal volume.
-      level: Math.min(1, Math.pow(this.smoothedLevel / 0.15, 0.6)),
-      brightness: Math.min(1, centroid * 3.2),
-      speaking,
-    });
+    // Compressed with a root curve: speech RMS lives in a narrow low band and
+    // a linear map would leave the world barely moving at normal volume.
+    const level = Math.min(1, Math.pow(this.smoothedLevel / 0.15, 0.6));
+    const brightness = Math.min(1, centroid * 3.2);
+
+    if (speaking) {
+      this.vocalSum += level;
+      this.brightnessSum += brightness;
+      this.vocalPeak = Math.max(this.vocalPeak, level);
+      this.vocalFrames++;
+    }
+
+    this.options.onLevel?.({ level, brightness, speaking });
 
     this.rafId = requestAnimationFrame(this.loop);
   };

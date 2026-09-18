@@ -51,6 +51,26 @@ export interface DiaryEntry {
     isBlend: boolean;
     label: string;
   };
+  /**
+   * How loudly this entry was actually spoken. Absent on entries saved before
+   * this existed, and on entries with no speech at all.
+   *
+   * Stored raw rather than normalised, deliberately: absolute microphone levels
+   * are incomparable across machines, so "loud" is only meaningful relative to
+   * the rest of *this* diary — a relationship that changes as the diary grows.
+   * Normalising at write time would freeze each entry against whatever history
+   * happened to exist that day. `vocalRanks()` does it at read time instead.
+   */
+  vocals?: {
+    /** Mean level while speaking, 0-1 after the root-curve compression. */
+    mean: number;
+    /** Loudest moment in the entry. */
+    peak: number;
+    /** Spectral centroid — a raised, tense voice sits higher than a calm one. */
+    brightness: number;
+    /** Roughly how long there was actual speech, in seconds. */
+    speakingSeconds: number;
+  };
   isCoreMemory: boolean;
   /** User's own words about why this mattered, if they promoted it. */
   note?: string;
