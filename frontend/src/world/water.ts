@@ -31,6 +31,7 @@
 
 import * as THREE from 'three';
 import { NOISE_2D } from './glsl';
+import { LAYER } from './layers';
 import { WELL_RADIUS, elevation, type TerrainShape } from './terrain';
 
 /**
@@ -252,7 +253,12 @@ export class Water {
     // sorts transparent objects by their centre, and the sea's centre is the
     // origin — which puts a two-hundred-unit disc in the same sort position as
     // a beacon standing a few units from it.
-    this.mesh.renderOrder = 1;
+    //
+    // This number alone was not enough to get that, and the half of it that was
+    // missing lives in ./layers.ts: the glowing things have to be given a higher
+    // order to match, or they keep the default of zero and the sea — nominally
+    // "before" them — is drawn over the top.
+    this.mesh.renderOrder = LAYER.water;
   }
 
   /**

@@ -199,6 +199,9 @@ export class DiarySession {
     this.setState('processing');
     const recording = await this.mic.stop();
     const durationSeconds = this.mic.elapsedMs() / 1000;
+    // Read before discarding the recorder: buildEntry runs after this point,
+    // by which time this.mic is null and the measurement would be lost.
+    const vocals = this.mic.sessionVocals() ?? undefined;
     this.mic = null;
 
     const faceVector = this.face.sessionVector();
@@ -212,7 +215,7 @@ export class DiarySession {
     });
     this.lastFinal = result;
 
-    const entry = await this.buildEntry(result, faceVector, durationSeconds);
+    const entry = await this.buildEntry(result, faceVector, durationSeconds, vocals);
     if (!entry) {
       this.setState('idle');
       return null;
@@ -242,7 +245,8 @@ export class DiarySession {
   private async buildEntry(
     result: AnalyzeResponse | null,
     faceVector: EmotionVector | null,
-    durationSeconds: number
+    durationSeconds: number,
+    vocals: DiaryEntry['vocals']
   ): Promise<DiaryEntry | null> {
     const createdAt = this.startedAt ?? new Date();
 
@@ -275,6 +279,7 @@ export class DiarySession {
         ],
         peak: null,
         isCoreMemory: false,
+        vocals,
         worldPosition: spiralPlacement(world.entryCount),
       };
     }
@@ -320,6 +325,7 @@ export class DiarySession {
           }
         : undefined,
       isCoreMemory: false,
+      vocals,
       worldPosition: spiralPlacement(world.entryCount),
     };
   }

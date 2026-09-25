@@ -308,7 +308,20 @@ def main() -> None:
 
     trainer.train()
 
-    print("\n=== Test set ===")
+    # Dev first, and saved alongside test below.
+    #
+    # Comparing runs on the test number and then shipping the winner is test-set
+    # selection: the reported figure stops being an estimate of held-out
+    # performance and becomes the maximum over however many configurations were
+    # tried. Dev exists to absorb that. Choose the configuration on `dev_metrics`,
+    # then quote `test_metrics` once for the one you chose.
+    print("\n=== Dev set (use THIS to choose between runs) ===")
+    dev_metrics = trainer.evaluate(datasets["dev"], metric_key_prefix="dev")
+    for key, value in dev_metrics.items():
+        if isinstance(value, float):
+            print(f"  {key}: {value:.4f}")
+
+    print("\n=== Test set (quote once, for the chosen run) ===")
     metrics = trainer.evaluate(datasets["test"], metric_key_prefix="test")
     for key, value in metrics.items():
         if isinstance(value, float):
@@ -339,6 +352,13 @@ def main() -> None:
                 "speaker_tokens": args.speaker_tokens,
                 "class_weighted": not args.no_class_weights,
                 "epochs": args.epochs,
+                "train_examples": len(splits["train"]),
+                "train_class_balance": {
+                    str(k): int(v) for k, v in splits["train"]["Emotion"].value_counts().items()
+                },
+                "dev_metrics": {
+                    k: v for k, v in dev_metrics.items() if isinstance(v, (int, float))
+                },
                 "test_metrics": {
                     k: v for k, v in metrics.items() if isinstance(v, (int, float))
                 },

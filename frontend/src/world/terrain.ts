@@ -33,6 +33,7 @@ import * as THREE from 'three';
 import { GRADIENT_ORDER, PALETTE, type EmotionVector, focus } from '../emotions';
 import { BIOMES, type Biome } from './biomes';
 import { NOISE_2D } from './glsl';
+import { radialGrid } from './grid';
 import { Water } from './water';
 
 /**
@@ -48,6 +49,15 @@ export const WELL_RADIUS = 2.8;
 
 /** Where the land stops rolling and starts being rock. */
 const ROCK_LINE = 1.8;
+
+/**
+ * Tessellation of the island.
+ *
+ * Spokes set the resolution outright; the rings follow from them, because
+ * `radialGrid` spaces rings to keep every quad square rather than taking a
+ * count. See ./grid.ts for why an evenly-spaced ring mesh cannot do that.
+ */
+const ISLAND_SPOKES = 224;
 
 /**
  * The one colour not owned by the biome.
@@ -190,7 +200,71 @@ export function elevation(x: number, z: number, shape: TerrainShape): number {
   // A wobble on the waterline, or the shore is a ruled line across the view.
   const wobble = (fbm(x * 0.085 + 4.4, z * 0.085 - 2.1, shape.seed + 41) * 2 - 1) * 0.85;
 
-  return (1 + hills + wobble + shoreLean) * lip + rim;
+  return (1 + hills + wobble + shoreLean) * lip + rim + seaIsland(x, z, shape);
+}
+
+/**
+ * Land out in the water.
+ *
+ * A sea with nothing in it is a colour, not a place: there is no scale, nothing
+ * for the eye to travel to, and no reason to look that way at all. One small
+ * island a long way out fixes all three, and it is the cheapest possible piece
+ * of Attention Restoration Theory's *extent* — the sense that the world carries
+ * on past the frame.
+ *
+ * Exported and added in two places, which is the only fiddly thing about it.
+ * The far field draws its own surface from horizon.ts's `backdrop` and never
+ * consults this function past the blend band, while water.ts bakes its depth
+ * from `elevation`. Put the island in only one of them and you get either an
+ * island the sea does not know about — drowned in deep-water colour with no
+ * beach — or a shoal of shallow water with no land in it. Both were tried.
+ *
+ * Placed along the grain, on the downhill side, because that is where the water
+ * is. Everything else about it is derived from the seed, so it is the same
+ * island every time the diary is opened.
+ */
+export function seaIsland(x: number, z: number, shape: TerrainShape): number {
+  if (shape.biome.edge !== 'shore') return 0;
+
+  // Two, at different sizes and bearings: one to look at and one to stop the
+  // first from reading as a deliberately placed object.
+  return (
+    island(x, z, shape, 0.42, 58, 10.5, 13) +
+    island(x, z, shape, -0.63, 46, 5.5, 8.5)
+  );
+}
+
+/**
+ * One landform in the water.
+ *
+ * @param swing   Bearing away from straight downhill, in radians.
+ * @param out     How far from the middle of the world it sits.
+ * @param width   Radius at which it has fallen to a third of its height.
+ * @param rise    Peak height above the surrounding sea floor.
+ */
+function island(
+  x: number,
+  z: number,
+  shape: TerrainShape,
+  swing: number,
+  out: number,
+  width: number,
+  rise: number
+): number {
+  const bearing = shape.grain + swing;
+  const cx = Math.cos(bearing) * out;
+  const cz = Math.sin(bearing) * out;
+
+  const d = Math.hypot(x - cx, z - cz);
+  // Cut off well before the falloff would matter, so the whole thing costs one
+  // distance check almost everywhere in the world.
+  if (d > width * 2.2) return 0;
+
+  // A rough edge, or it is a cone. Sampled on position rather than on the
+  // distance so the coastline wanders rather than pulsing in and out.
+  const ragged = 1 + (fbm(x * 0.09 + 31.7, z * 0.09 - 12.3, shape.seed + 205) * 2 - 1) * 0.45;
+  const t = d / (width * ragged);
+  return Math.exp(-t * t) * rise;
 }
 
 /**
@@ -250,7 +324,7 @@ export class Terrain {
    *
    * Called when the diary changes, which at diary scale is a handful of times
    * per session — so this allocates a fresh geometry rather than trying to
-   * update one in place. A ring of 200 × 72 segments is about 29k triangles,
+   * update one in place. The grid is a couple of dozen thousand triangles,
    * which is nothing next to the bloom pass that is already running, and fine
    * enough that the fourth noise octave in `elevation` actually survives into
    * the mesh instead of being averaged away between vertices.
@@ -267,8 +341,14 @@ export class Terrain {
       return;
     }
 
-    const geometry = new THREE.RingGeometry(WELL_RADIUS, ISLAND_RADIUS * 1.08, 200, 72);
-    geometry.rotateX(-Math.PI / 2);
+    const geometry = radialGrid({
+      inner: WELL_RADIUS,
+      outer: ISLAND_RADIUS * 1.08,
+      spokes: ISLAND_SPOKES,
+      aspect: 1,
+      jitter: 0.34,
+      seed: shape.seed + 3,
+    });
 
     const position = geometry.attributes.position as THREE.BufferAttribute;
     const colors = new Float32Array(position.count * 3);
@@ -341,6 +421,23 @@ export class Terrain {
 // Surface
 // ---------------------------------------------------------------------------
 
+export interface GroundMaterialOptions {
+  /**
+   * Where the surface detail starts fading out and where it is gone.
+   *
+   * The detail below is authored at a fixed world-space frequency, which is
+   * right for ground you are standing near and wrong for a mountain range four
+   * screen-pixels tall: past a certain distance the noise is finer than a pixel
+   * and all it can do is shimmer as the camera turns. Fading it out leaves the
+   * distance carrying its silhouette and its colour, which is all that survives
+   * out there anyway.
+   */
+  detailNear?: number;
+  detailFar?: number;
+  /** Pushes this surface back in the depth buffer. See the far field's overlap. */
+  depthBias?: number;
+}
+
 /**
  * The ground's material: MeshStandardMaterial with procedural surface detail.
  *
@@ -362,14 +459,32 @@ export class Terrain {
  * because `normal` at this point in three's shader is a view-space vector and
  * adding a world-space offset to it would make the lighting swing as the camera
  * orbits.
+ *
+ * Exported because the far field uses it too, and that is not an optimisation —
+ * it is the difference between one landscape and two. The distance used to be a
+ * plain vertex-coloured material, so the moment the ground crossed from the
+ * island onto the backdrop it stopped being made of anything and became painted
+ * polygons. Sharing the recipe means the near ground and the far ground are the
+ * same substance seen at different distances, which is what they are.
  */
-function makeGroundMaterial(): THREE.MeshStandardMaterial {
+export function makeGroundMaterial(
+  options: GroundMaterialOptions = {}
+): THREE.MeshStandardMaterial {
+  const detailNear = options.detailNear ?? 55;
+  const detailFar = options.detailFar ?? 150;
+
   const material = new THREE.MeshStandardMaterial({
     vertexColors: true,
     roughness: 0.95,
     metalness: 0.0,
     fog: true,
   });
+
+  if (options.depthBias) {
+    material.polygonOffset = true;
+    material.polygonOffsetFactor = options.depthBias;
+    material.polygonOffsetUnits = options.depthBias;
+  }
 
   material.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
@@ -392,12 +507,21 @@ function makeGroundMaterial(): THREE.MeshStandardMaterial {
         `#include <common>
          varying vec3 vGroundPos;
          varying vec3 vGroundNormal;
-         ${NOISE_2D}`
+         ${NOISE_2D}
+
+         // How much fine detail this fragment still deserves.
+         float groundDetail(vec3 worldPos) {
+           return 1.0 - smoothstep(
+             ${detailNear.toFixed(1)}, ${detailFar.toFixed(1)},
+             distance(cameraPosition, worldPos)
+           );
+         }`
       )
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
          {
+           float detail = groundDetail(vGroundPos);
            float grain = fbm2(vGroundPos.xz * 2.7 + 4.3);
            // Not "patch" — that is a reserved word in GLSL ES 3.0 (tessellation)
            // and the shader will not compile with it, with an error that points
@@ -406,23 +530,32 @@ function makeGroundMaterial(): THREE.MeshStandardMaterial {
            // Multiplicative, so the variation rides on whatever colour this
            // piece of ground already is rather than washing every region toward
            // the same grey.
-           diffuseColor.rgb *= 0.80 + 0.40 * grain;
-           diffuseColor.rgb *= mix(vec3(0.94, 0.97, 1.02), vec3(1.10, 1.03, 0.90), blotch);
+           diffuseColor.rgb *= mix(1.0, 0.80 + 0.40 * grain, detail);
+           // The blotching is broad enough to survive at range, so it keeps
+           // most of its strength where the grain has gone.
+           diffuseColor.rgb *= mix(
+             vec3(0.94, 0.97, 1.02), vec3(1.10, 1.03, 0.90),
+             mix(0.5, blotch, 0.35 + 0.65 * detail)
+           );
          }`
       )
       .replace(
         '#include <normal_fragment_begin>',
         `#include <normal_fragment_begin>
          {
-           vec2 gp = vGroundPos.xz * 1.9;
-           float e = 0.22;
-           float n0 = fbm2(gp);
-           float nx = fbm2(gp + vec2(e, 0.0));
-           float nz = fbm2(gp + vec2(0.0, e));
-           vec3 bumped = normalize(
-             vGroundNormal + vec3(-(nx - n0), 0.0, -(nz - n0)) * (0.55 / e)
-           );
-           normal = normalize((viewMatrix * vec4(bumped, 0.0)).xyz);
+           float detail = groundDetail(vGroundPos);
+           if (detail > 0.01) {
+             vec2 gp = vGroundPos.xz * 1.9;
+             float e = 0.22;
+             float n0 = fbm2(gp);
+             float nx = fbm2(gp + vec2(e, 0.0));
+             float nz = fbm2(gp + vec2(0.0, e));
+             vec3 bumped = normalize(
+               vGroundNormal
+                 + vec3(-(nx - n0), 0.0, -(nz - n0)) * (0.55 / e) * detail
+             );
+             normal = normalize((viewMatrix * vec4(bumped, 0.0)).xyz);
+           }
          }`
       )
       .replace(
@@ -464,13 +597,6 @@ export function groundColorAt(
   palette: THREE.Color[],
   out: THREE.Color
 ): THREE.Color {
-  // A broad, slow field so the emotional colouring arrives as regions of ground
-  // rather than as per-vertex speckle.
-  const t = clamp01(
-    smoothstep(0.3, 0.7, fbm(x * 0.085 + 11.3, z * 0.085 - 4.1, shape.seed + 97))
-  );
-  gradientAt(t, bands, palette, out);
-
   const biome = shape.biome;
 
   // Two earths rather than one, mixed by a second field. A single base colour
@@ -481,6 +607,14 @@ export function groundColorAt(
     SCRATCH_DRY.set(biome.ground.dry),
     dryness
   );
+
+  // A broad, slow field so the emotional colouring arrives as regions of ground
+  // rather than as per-vertex speckle.
+  const t = clamp01(
+    smoothstep(0.3, 0.7, fbm(x * 0.085 + 11.3, z * 0.085 - 4.1, shape.seed + 97))
+  );
+  gradientAt(t, bands, palette, out);
+  earthen(out, earth);
   out.lerp(earth, 1 - biome.tint);
 
   const sea = shape.waterLevel;
@@ -517,11 +651,43 @@ export function groundColorAt(
   return out.multiplyScalar(0.76 + 0.24 * clamp01((y - (sea ?? -1.5)) / 3));
 }
 
+/**
+ * Pull an emotion colour down to something ground could plausibly be.
+ *
+ * The palette in emotions.ts is a *UI* palette — #ffd23f for joy, #9b5de5 for
+ * fear — chosen so a dot on a chart is unmistakable at eight pixels across.
+ * Painting a hillside with it at even a third strength gives exactly what it
+ * sounds like: slicks of purple and orange lying on the grass, which read as a
+ * texturing bug rather than as a mood. The land looked like something had been
+ * spilled on it.
+ *
+ * The hue is the part that carries the meaning, so the hue is what survives
+ * untouched. Saturation is capped near the earth's own, and the lightness is
+ * replaced by the earth's, nudged by whether this emotion is a light or a dark
+ * one. What comes out is the same ground in a different cast — which is what
+ * "your week has a colour" should look like on a landscape.
+ *
+ * Exported because the far field tints itself from the same palette and would
+ * otherwise disagree with the island about how loud that palette is allowed to
+ * be.
+ */
+export function earthen(color: THREE.Color, earth: THREE.Color): THREE.Color {
+  color.getHSL(HSL_MOOD);
+  earth.getHSL(HSL_EARTH);
+  return color.setHSL(
+    HSL_MOOD.h,
+    Math.min(HSL_MOOD.s, 0.26 + HSL_EARTH.s * 0.55),
+    HSL_EARTH.l * (0.8 + 0.4 * HSL_MOOD.l)
+  );
+}
+
 /** Reused per call. This runs once per vertex over tens of thousands of them. */
 const SCRATCH_EARTH = new THREE.Color();
 const SCRATCH_DRY = new THREE.Color();
 const SCRATCH_SAND = new THREE.Color();
 const SCRATCH_ROCK = new THREE.Color();
+const HSL_MOOD = { h: 0, s: 0, l: 0 };
+const HSL_EARTH = { h: 0, s: 0, l: 0 };
 
 /** The palette in GRADIENT_ORDER. Allocated per rebuild, never per frame. */
 export function gradientPalette(): THREE.Color[] {

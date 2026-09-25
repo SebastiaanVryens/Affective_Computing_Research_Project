@@ -791,6 +791,28 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.diag-reset {
+  margin-top: 26px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.diag-reset .subtitle {
+  margin: 0 0 12px;
+  max-width: 46ch;
+}
+
+.is-danger {
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.32);
+  color: #ff9d9d;
+}
+
+.is-danger:hover {
+  background: rgba(255, 107, 107, 0.22);
+  color: #ffc4c4;
+}
+
 .empty-state {
   padding: 40px 20px;
   text-align: center;

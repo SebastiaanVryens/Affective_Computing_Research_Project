@@ -16,6 +16,13 @@
 import * as THREE from 'three';
 import { PALETTE, type Emotion } from '../emotions';
 import type { DiaryEntry } from '../state/db';
+import {
+  loudnessGlow,
+  loudnessScale,
+  vocalRanks,
+  type VocalRank,
+} from '../state/vocals';
+import { LAYER } from './layers';
 import { spiralPlacement } from './placement';
 
 const CORE_RING_RADIUS = 6.2;
@@ -83,6 +90,10 @@ export class MemoryOrbs {
     this.disposeMesh();
 
     const regular = entries.filter((e) => !e.isCoreMemory);
+
+    // Ranked over the whole diary rather than per-group, so promoting an entry
+    // to a core memory changes neither its own loudness nor its neighbours'.
+    const ranks = vocalRanks(entries);
     if (regular.length > 0) {
       // Clone rather than share: the instanced attributes below are sized to
       // this particular instance count, and writing them onto the shared
@@ -99,6 +110,9 @@ export class MemoryOrbs {
       // Per-instance second emotion, consumed by the patched shader.
       const secondaryColors = new Float32Array(regular.length * 3);
       const blendAmounts = new Float32Array(regular.length);
+      // Vocal loudness, ranked within this diary. 1 = no measurement, which is
+      // what every entry saved before this feature existed gets.
+      const glowAmounts = new Float32Array(regular.length).fill(1);
 
       regular.forEach((entry, i) => {
         const position = entry.worldPosition
@@ -111,10 +125,19 @@ export class MemoryOrbs {
 
         // A confident, longer entry earns a bigger orb — the world's visual
         // weight tracks how much you actually said, not just how often.
+        //
+        // Multiplied by how loudly it was spoken, ranked against this diary's
+        // own history: an animated entry swells, a quiet late-night one stays
+        // small. Multiplicative rather than additive so it modulates the
+        // existing meaning instead of competing with it, and centred on 1 so an
+        // entry with no vocal measurement keeps exactly the size it had.
+        const rank = ranks.get(entry.id);
         const scale =
-          0.55 +
-          0.5 * entry.certainty +
-          0.35 * Math.min(1, entry.durationSeconds / 120);
+          (0.55 +
+            0.5 * entry.certainty +
+            0.35 * Math.min(1, entry.durationSeconds / 120)) *
+          loudnessScale(rank);
+        glowAmounts[i] = loudnessGlow(rank);
 
         this.baseScales[i] = scale;
         this.phases[i] = (i * 0.618) % 1;
@@ -152,16 +175,23 @@ export class MemoryOrbs {
         'aBlend',
         new THREE.InstancedBufferAttribute(blendAmounts, 1)
       );
+      this.mesh.geometry.setAttribute(
+        'aGlow',
+        new THREE.InstancedBufferAttribute(glowAmounts, 1)
+      );
 
       this.mesh.instanceMatrix.needsUpdate = true;
       if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
       this.group.add(this.mesh);
     }
 
-    this.rebuildCoreMemories(entries.filter((e) => e.isCoreMemory));
+    this.rebuildCoreMemories(entries.filter((e) => e.isCoreMemory), ranks);
   }
 
-  private rebuildCoreMemories(cores: DiaryEntry[]): void {
+  private rebuildCoreMemories(
+    cores: DiaryEntry[],
+    ranks: Map<string, VocalRank> = new Map()
+  ): void {
     for (const mesh of this.coreMeshes) {
       mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
@@ -199,6 +229,12 @@ export class MemoryOrbs {
       mesh.userData.entryId = entry.id;
       mesh.userData.isCore = true;
       mesh.userData.phase = i * 0.37;
+      // Promoting an entry must not change how loud it looks. update() rewrites
+      // both scale and emissiveIntensity every frame, so the vocal factors ride
+      // along here and are re-applied there rather than baked in once.
+      const coreRank = ranks.get(entry.id);
+      mesh.userData.vocalScale = loudnessScale(coreRank);
+      mesh.userData.vocalGlow = loudnessGlow(coreRank);
 
       this.coreMeshes.push(mesh);
       this.coreGroup.add(mesh);
@@ -215,7 +251,7 @@ export class MemoryOrbs {
       const mesh = this.coreMeshes[i];
       const phase = mesh.userData.phase as number;
       const pulse = 1 + Math.sin(elapsed * 1.1 + phase * Math.PI * 2) * 0.045;
-      mesh.scale.setScalar(pulse);
+      mesh.scale.setScalar(pulse * ((mesh.userData.vocalScale as number) ?? 1));
       mesh.rotation.y += delta * 0.22;
       mesh.rotation.x += delta * 0.08;
 
@@ -223,9 +259,10 @@ export class MemoryOrbs {
       // Arousal contributes far less than it used to: at full weight a loud
       // moment on its own was enough to push these back into white-out.
       material.emissiveIntensity =
-        CORE_EMISSIVE_BASE +
-        CORE_EMISSIVE_PULSE * Math.sin(elapsed * 0.9 + phase) +
-        arousal * 0.25;
+        (CORE_EMISSIVE_BASE +
+          CORE_EMISSIVE_PULSE * Math.sin(elapsed * 0.9 + phase) +
+          arousal * 0.25) *
+        ((mesh.userData.vocalGlow as number) ?? 1);
     }
 
     this.coreGroup.rotation.y -= delta * 0.05; // counter-rotates against the galaxy
@@ -286,7 +323,7 @@ export class MemoryOrbs {
 
   dispose(): void {
     this.disposeMesh();
-    this.rebuildCoreMemories([]);
+    this.rebuildCoreMemories([], new Map());
     this.geometry.dispose();
     this.material.dispose();
   }
@@ -318,6 +355,10 @@ export class LiveOrb {
     this.mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(1.35, 5), this.material);
     this.mesh.position.set(0, 1.2, 0);
     this.mesh.visible = false;
+    // Transparent, and it hangs over the well on the mind floor with the sea
+    // behind it — so it has to be ordered in front of the water explicitly, the
+    // same as everything else made of light. See ./layers.ts.
+    this.mesh.renderOrder = LAYER.glow;
   }
 
   setActive(active: boolean): void {
@@ -391,8 +432,10 @@ function makeOrbMaterial(): THREE.MeshStandardMaterial {
         `#include <common>
          attribute vec3 aSecondary;
          attribute float aBlend;
+         attribute float aGlow;
          varying vec3 vSecondary;
          varying float vBlend;
+         varying float vGlow;
          varying vec3 vLocal;`
       )
       .replace(
@@ -400,6 +443,7 @@ function makeOrbMaterial(): THREE.MeshStandardMaterial {
         `#include <begin_vertex>
          vSecondary = aSecondary;
          vBlend = aBlend;
+         vGlow = aGlow;
          vLocal = normalize(position);`
       );
 
@@ -409,6 +453,7 @@ function makeOrbMaterial(): THREE.MeshStandardMaterial {
         `#include <common>
          varying vec3 vSecondary;
          varying float vBlend;
+         varying float vGlow;
          varying vec3 vLocal;`
       )
       .replace(
@@ -420,7 +465,11 @@ function makeOrbMaterial(): THREE.MeshStandardMaterial {
          // simple vertical fade as the galaxy rotates.
          float swirl = vLocal.y * 0.75 + sin(vLocal.x * 3.0 + vLocal.z * 2.0) * 0.18;
          float t = smoothstep(-0.45, 0.45, swirl) * vBlend;
-         diffuseColor.rgb = mix(diffuseColor.rgb, vSecondary, t);`
+         diffuseColor.rgb = mix(diffuseColor.rgb, vSecondary, t);
+         // How loudly this memory was spoken, ranked against the rest of the
+         // diary. Applied after the blend so a two-toned orb brightens as one
+         // object rather than having its halves lit differently.
+         diffuseColor.rgb *= vGlow;`
       );
   };
 

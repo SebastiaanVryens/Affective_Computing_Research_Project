@@ -23,6 +23,7 @@
  */
 
 import * as THREE from 'three';
+import { LAYER } from './layers';
 
 /** Where a thread starts: the top of a beacon on the mind floor. */
 export interface ThreadAnchor {
@@ -82,6 +83,11 @@ export class MemoryThreads {
       });
 
       const mesh = new THREE.Mesh(this.geometry, material);
+      // A thread runs from the island down past the sea, so on a coast most of
+      // its length is seen against water. Additive and depth-writeless like
+      // everything else made of light, which means without this the sea is drawn
+      // over it — see ./layers.ts.
+      mesh.renderOrder = LAYER.glow;
       this.threads.push({
         entryId: anchor.entryId,
         mesh,

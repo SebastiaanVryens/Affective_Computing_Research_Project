@@ -11,19 +11,48 @@ dist/
 frontend/public/models/
 
 # Datasets and trained checkpoints — large, and all regenerable:
-#   data/meld/      python -m training.prepare_meld
-#   data/corpora/   python -m training.prepare_corpora
-#   backend/models/ python -m training.train_text
+#   data/meld/        python -m training.prepare_meld
+#   data/corpora/     python -m training.prepare_corpora
+#   data/meld_faces/  python -m training.prepare_meld_video
+#   backend/models/   python -m training.train_text / train_face
 data/meld/
 data/corpora/
+data/meld_faces/
+#   data/mosi_faces/  python -m training.prepare_mosi
+#   data/fusion/      python -m training.dump_channels{,_mosi}
+#   data/meld_voice/  python -m training.eval_voice
+data/mosi_faces/
+data/fusion/
+data/meld_voice/
 backend/models/
 backend/checkpoints/
+
+# Corpus snapshots. data/corpora_perclass/ and data/corpora_proportional/ were
+# committed before this rule existed (~94k lines of regenerable CSV) and stay
+# tracked so history is not rewritten; `git rm --cached` them if the repo size
+# ever matters. Both are reproducible with training/prepare_corpora.py --cap-mode.
+data/corpora_*/
 
 # Evaluation output (training/eval_diary.py --json)
 data/*.json
 
 # Scratch audio written by the manual test scripts
 data/_*.wav
+
+# Voice recordings for training/eval_stitch.py. Someone's actual voice — never
+# commit these to a public repo. The .txt references beside them are derived
+# from diary_probe.py and are fine to track.
+data/stitch/*.wav
+data/stitch/*.webm
+data/stitch/*.m4a
+data/stitch/*.mp3
+
+# Desktop build payload. ~2.1GB of model weights assembled by
+# `python -m bundling.bundle_models` — regenerable, and far past anything git
+# should hold. The installer carries these; the repo does not.
+desktop/resources/
+desktop/node_modules/
+desktop/dist/
 
 # Local overrides
 .env

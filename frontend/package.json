@@ -7,14 +7,18 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "fetch-models": "node scripts/fetch-models.mjs"
+    "fetch-models": "node scripts/fetch-models.mjs",
+    "eval-faceapi": "node scripts/eval-faceapi.mjs"
   },
   "dependencies": {
     "@vladmandic/face-api": "^1.7.15",
     "three": "^0.186.0"
   },
   "devDependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "@types/three": "^0.186.0",
+    "jpeg-js": "^0.4.4",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"
   }

@@ -99,17 +99,64 @@ export class FaceCapture {
   }
 
   async start(): Promise<void> {
-    if (!this.status.ready) await this.load();
+    // Each failure below gets its own message, and each is recorded on `status`
+    // so the Signals panel shows it. Previously every one of these surfaced as
+    // "No camera", which points at the webcam even when the real cause is
+    // missing model weights or a non-secure origin — three different fixes
+    // wearing the same label.
+    if (!this.status.ready) {
+      try {
+        await this.load();
+      } catch (error) {
+        throw this.fail(
+          `Face model weights could not be loaded from ${MODEL_URL}. ` +
+            `Run "npm run fetch-models" in frontend/. (${describe(error)})`
+        );
+      }
+    }
 
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480, facingMode: 'user' },
-      audio: false, // the mic is opened separately, with its own constraints
-    });
+    // Undefined rather than throwing: on a non-secure origin the browser does
+    // not expose mediaDevices at all, so this reads as "no such API" instead of
+    // "permission denied". localhost is treated as secure; a plain-http LAN
+    // address like http://192.168.1.x:5173 is not.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw this.fail(
+        window.isSecureContext
+          ? 'This browser does not expose navigator.mediaDevices.getUserMedia.'
+          : `Camera blocked: ${window.location.origin} is not a secure context. ` +
+              'Open the app at http://localhost:5173 or serve it over HTTPS.'
+      );
+    }
+
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: 'user' },
+        audio: false, // the mic is opened separately, with its own constraints
+      });
+    } catch (error) {
+      throw this.fail(cameraFailure(error));
+    }
+
     this.video.srcObject = this.stream;
-    await this.video.play();
+    try {
+      await this.video.play();
+    } catch (error) {
+      // Autoplay policy. The element is muted and playsinline, so this should
+      // not fire — but when it does, the stream is live and only the <video>
+      // is paused, which looks exactly like a dead camera.
+      throw this.fail(`Camera stream acquired but the preview would not play: ${describe(error)}`);
+    }
 
+    this.status.error = undefined;
     this.status.running = true;
     this.scheduleNext();
+  }
+
+  /** Record a reason on `status` (so Signals shows it) and build the error. */
+  private fail(message: string): Error {
+    this.status.error = message;
+    this.status.running = false;
+    return new Error(message);
   }
 
   stop(): void {
@@ -236,6 +283,46 @@ export class FaceCapture {
 
   getStatus(): FaceStatus {
     return { ...this.status };
+  }
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Turn a getUserMedia rejection into something actionable.
+ *
+ * The browser's own messages are famously unhelpful ("Could not start video
+ * source"), and the `name` is what actually distinguishes a denied permission
+ * from a camera another application is holding open — which are unrelated
+ * problems with unrelated fixes.
+ */
+function cameraFailure(error: unknown): string {
+  const name = (error as { name?: string })?.name ?? '';
+  switch (name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return (
+        'Camera permission was denied. Check the padlock icon in the address bar, ' +
+        'and on Windows also Settings > Privacy & security > Camera, which can ' +
+        'block the browser before the page is ever asked.'
+      );
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return 'No camera device was found.';
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return (
+        'The camera exists but could not be opened — usually another application ' +
+        '(Teams, Zoom, OBS, another browser tab) is holding it.'
+      );
+    case 'OverconstrainedError':
+      return 'No camera mode satisfied the 640x480 request.';
+    case 'SecurityError':
+      return 'Camera use was blocked by the page security policy.';
+    default:
+      return `Camera could not be started: ${name || 'unknown error'} — ${describe(error)}`;
   }
 }
 

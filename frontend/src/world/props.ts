@@ -27,7 +27,7 @@
 
 import * as THREE from 'three';
 import { PALETTE, type Emotion } from '../emotions';
-import { motifModel, specFor } from './models';
+import { motifModel, pickModel, specFor } from './models';
 
 /**
  * Deterministic PRNG (mulberry32).
@@ -136,10 +136,13 @@ export class PropFactory {
    *                 into a houseplant; see `indoor` in motifs.ts.
    */
   build(motifId: string, rng: Rng, emotion: Emotion, modelKey = motifId): THREE.Object3D {
-    const spec = specFor(modelKey);
+    // A key that has variants resolves to one of them here, from the caller's
+    // own seeded generator — so two trees in the same wood are two trees.
+    const key = pickModel(modelKey, rng);
+    const spec = specFor(key);
     if (spec) {
       const model = motifModel(
-        modelKey,
+        key,
         spec.tint ? { color: new THREE.Color(PALETTE[emotion].base), amount: spec.tint } : null
       );
       if (model) {

@@ -30,6 +30,7 @@ import {
   deleteEntry,
   exportAll,
   setCoreMemory,
+  wipe,
 } from '../state/db';
 
 export interface ModalHost {
@@ -104,6 +105,8 @@ export class Modals {
       )
     );
 
+    content.append(this.buildExportRow(entries));
+
     // Granularity switcher
     const switcher = document.createElement('div');
     switcher.className = 'granularity';
@@ -159,8 +162,6 @@ export class Modals {
     for (const entry of recent) {
       content.append(this.buildEntryRow(entry));
     }
-
-    content.append(this.buildExportRow(entries));
   }
 
   private renderBucketDetail(bucket: Bucket, allEntriesList: DiaryEntry[]): void {
@@ -361,6 +362,60 @@ export class Modals {
         )
       );
     }
+
+    content.append(this.buildResetRow());
+  }
+
+  /**
+   * Wipe the whole diary and start from an empty world.
+   *
+   * It lives in Signals rather than in the history view on purpose: this is a
+   * testing tool, not a feature of the diary. Everything is local and there is
+   * no undo, so it names the count before it asks and points at the JSON export
+   * for anyone who wanted to keep the entries.
+   */
+  private buildResetRow(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'diag-reset';
+
+    row.append(subheading('Start over'));
+    row.append(
+      paragraph(
+        'Erases every entry and the accumulated world — orbs, landscape and ' +
+          'lifetime mood — leaving the app as it was on first launch. Permanent, ' +
+          'and not backed up anywhere: export the raw JSON from History first if ' +
+          'you want it back.',
+        'subtitle'
+      )
+    );
+
+    const button = document.createElement('button');
+    button.className = 'ghost is-danger';
+    button.textContent = 'Erase everything';
+    button.addEventListener('click', async () => {
+      const entries = await allEntries();
+      const count = entries.length;
+      if (count === 0) {
+        this.callbacks.onToast('Nothing to erase — the world is already empty');
+        return;
+      }
+      const noun = count === 1 ? 'entry' : 'entries';
+      if (
+        !window.confirm(
+          `Erase all ${count} ${noun} and reset the world?\n\n` +
+            'Every orb disappears and this cannot be undone.'
+        )
+      ) {
+        return;
+      }
+      await wipe();
+      await this.callbacks.onDiaryChanged();
+      this.callbacks.onToast(`Erased ${count} ${noun} — the world is empty again`);
+      this.close();
+    });
+
+    row.append(button);
+    return row;
   }
 
   // -- shared pieces ---------------------------------------------------
@@ -471,7 +526,7 @@ export class Modals {
   private buildExportRow(entries: DiaryEntry[]): HTMLElement {
     const row = document.createElement('div');
     row.style.cssText =
-      'display:flex;gap:8px;margin-top:26px;padding-top:18px;border-top:1px solid rgba(255,255,255,0.07);flex-wrap:wrap;';
+      'display:flex;gap:8px;margin:14px 0 20px;padding-bottom:18px;border-bottom:1px solid rgba(255,255,255,0.07);flex-wrap:wrap;';
 
     const report = document.createElement('button');
     report.className = 'ghost';

@@ -196,6 +196,23 @@ async function main(): Promise<void> {
     }
   });
 
+  /** Which keys drive the camera, and which way. */
+  const SPIN_KEYS: Record<string, number> = { KeyA: -1, KeyD: 1 };
+  const ZOOM_KEYS: Record<string, number> = { KeyW: 1, KeyS: -1 };
+  const held = new Set<string>();
+  const applyKeys = (): void => {
+    let spin = 0;
+    let zoom = 0;
+    for (const code of held) {
+      spin += SPIN_KEYS[code] ?? 0;
+      zoom += ZOOM_KEYS[code] ?? 0;
+    }
+    world.setSpin(spin);
+    world.setZoom(zoom);
+  };
+  const isCameraKey = (code: string): boolean =>
+    SPIN_KEYS[code] !== undefined || ZOOM_KEYS[code] !== undefined;
+
   // Space bar as a shortcut, since the button is the only control that matters.
   // C flips floors, so you can go down and look at a memory without breaking
   // off mid-sentence to find the mouse.
@@ -211,7 +228,33 @@ async function main(): Promise<void> {
     } else if (event.code === 'KeyC') {
       event.preventDefault();
       world.toggleView();
+    } else if (isCameraKey(event.code)) {
+      held.add(event.code);
+      applyKeys();
     }
+  });
+
+  // A and D turn the world, W and S pull it closer and push it away, for as
+  // long as they are held.
+  //
+  // Which keys are *down* rather than which was pressed last, because the two
+  // come apart in ordinary use: hold A, press D without letting go, and a
+  // last-press scheme has the world turning right with the left key still down.
+  // Holding both cancels, which is the only sensible reading of both.
+  //
+  // Key-up is not guarded the way key-down is. A guard there would strand the
+  // world spinning if you released the key after opening a modal or clicking
+  // into a text field — the release has to be heard wherever it happens.
+  document.addEventListener('keyup', (event) => {
+    if (!held.delete(event.code)) return;
+    applyKeys();
+  });
+
+  // Alt-tabbing away never delivers the key-up, so the world would still be
+  // turning — or still zooming — when you came back.
+  window.addEventListener('blur', () => {
+    held.clear();
+    applyKeys();
   });
 
   // -- start the camera ------------------------------------------------
@@ -222,8 +265,12 @@ async function main(): Promise<void> {
   try {
     await face.start();
   } catch (error) {
-    console.warn('Camera unavailable:', error);
-    hud.toast('No camera — the world will respond to your voice and words only', 5500);
+    // face.start() classifies the cause and records it on its status, which the
+    // Signals panel shows. Repeat it here rather than the old generic "No
+    // camera", which sent people to check a webcam that was working fine.
+    const reason = face.getStatus().error ?? (error instanceof Error ? error.message : String(error));
+    console.warn('Face capture unavailable:', reason, error);
+    hud.toast(`Face channel off — ${reason}`, 9000);
   }
 
   // -- backend health --------------------------------------------------
@@ -275,10 +322,27 @@ async function main(): Promise<void> {
 
   // Stopping the camera on unload avoids leaving the webcam light on if the tab
   // is closed mid-session.
-  window.addEventListener('beforeunload', () => {
+  //
+  // `pagehide` as well as `beforeunload`: the latter is skipped entirely when a
+  // page goes into the back/forward cache, which would leave the webcam light on
+  // after navigating away.
+  const release = (): void => {
     face.dispose();
     world.stop();
-  });
+  };
+  window.addEventListener('beforeunload', release);
+  window.addEventListener('pagehide', release);
+
+  // Hot reload is the case neither of those covers, and it is the one that bites
+  // during development: Vite swaps this module without unloading the page, so no
+  // unload event fires, the previous FaceCapture keeps its MediaStream, and the
+  // replacement module's getUserMedia fails with NotReadableError — the webcam is
+  // genuinely in use, by the dead copy of this module. It then looks exactly like
+  // an external app holding the camera, and survives every edit until a full
+  // reload.
+  if (import.meta.hot) {
+    import.meta.hot.dispose(release);
+  }
 
   // Expose a little for console debugging during development.
   if (import.meta.env.DEV) {
