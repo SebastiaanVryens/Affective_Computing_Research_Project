@@ -105,6 +105,8 @@ export class Modals {
       )
     );
 
+    content.append(this.buildExportRow(entries));
+
     // Granularity switcher
     const switcher = document.createElement('div');
     switcher.className = 'granularity';
@@ -160,8 +162,6 @@ export class Modals {
     for (const entry of recent) {
       content.append(this.buildEntryRow(entry));
     }
-
-    content.append(this.buildExportRow(entries));
   }
 
   private renderBucketDetail(bucket: Bucket, allEntriesList: DiaryEntry[]): void {
@@ -526,7 +526,7 @@ export class Modals {
   private buildExportRow(entries: DiaryEntry[]): HTMLElement {
     const row = document.createElement('div');
     row.style.cssText =
-      'display:flex;gap:8px;margin-top:26px;padding-top:18px;border-top:1px solid rgba(255,255,255,0.07);flex-wrap:wrap;';
+      'display:flex;gap:8px;margin:14px 0 20px;padding-bottom:18px;border-bottom:1px solid rgba(255,255,255,0.07);flex-wrap:wrap;';
 
     const report = document.createElement('button');
     report.className = 'ghost';
