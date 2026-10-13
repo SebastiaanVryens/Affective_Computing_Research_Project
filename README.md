@@ -170,6 +170,7 @@ weights moved from 0.5 / 0.3 / 0.2 to **0.8 / 0.15 / 0.05**.
 
 ```powershell
 .\run.ps1            # starts the sidecar, warms the models, opens the app
+.\Demo.ps1 --Clear   # for a new demo with test data 
 ```
 
 <details>
