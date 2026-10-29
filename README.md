@@ -90,6 +90,7 @@ flowchart LR
   end
   SES -- audio --> ASR
   SES -- face --> FUS
+  ASR -- transcript --> SES
   FUS -- emotion --> SES
   KW -- keywords --> SES
 ```
