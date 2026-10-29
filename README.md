@@ -74,21 +74,24 @@ flowchart LR
     FACE --> MOOD[Live mood bus]
     LVL --> MOOD
     MOOD --> WORLD[3D world<br/>sky · orbs · island]
-    LVL -- loudness per entry --> DB
-    DB[(IndexedDB<br/>diary entries)] --> WORLD
+    MIC --> SES[Session<br/>controller]
+    FACE --> SES
+    LVL --> SES
+    SES --> MOOD
+    SES --> WORLD
+    SES --> DB[(IndexedDB<br/>diary entries)]
+    DB --> WORLD
   end
   subgraph Sidecar["Local sidecar (FastAPI · PyTorch)"]
     ASR[Whisper ASR] --> TXT[RoBERTa + general model<br/>text emotion]
     ASR --> KW[Keyword extraction]
-    TXT -- sentence emotions --> KW
+    TXT --> KW
     TXT --> FUS[Certainty-weighted<br/>late fusion]
   end
-  MIC -- audio chunks / full recording --> ASR
-  FACE -- face vector / timeline --> FUS
-  TXT -- streamed text emotion --> MOOD
-  KW -- streamed keywords --> WORLD
-  FUS -- result on stop --> DB
-  KW -- on stop --> DB
+  SES -- audio --> ASR
+  SES -- face --> FUS
+  FUS -- emotion --> SES
+  KW -- keywords --> SES
 ```
 
 All channels use the same **seven-class taxonomy from MELD** (neutral, joy,
