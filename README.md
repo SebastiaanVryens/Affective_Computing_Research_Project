@@ -74,17 +74,21 @@ flowchart LR
     FACE --> MOOD[Live mood bus]
     LVL --> MOOD
     MOOD --> WORLD[3D world<br/>sky · orbs · island]
+    LVL -- loudness per entry --> DB
     DB[(IndexedDB<br/>diary entries)] --> WORLD
   end
   subgraph Sidecar["Local sidecar (FastAPI · PyTorch)"]
-    ASR[Whisper ASR] --> TXT[RoBERTa<br/>text emotion]
+    ASR[Whisper ASR] --> TXT[RoBERTa + general model<br/>text emotion]
     ASR --> KW[Keyword extraction]
+    TXT -- sentence emotions --> KW
     TXT --> FUS[Certainty-weighted<br/>late fusion]
   end
-  MIC -- audio chunks --> ASR
-  FACE -- face timeline --> FUS
-  FUS --> DB
-  KW --> DB
+  MIC -- audio chunks / full recording --> ASR
+  FACE -- face vector / timeline --> FUS
+  TXT -- streamed text emotion --> MOOD
+  KW -- streamed keywords --> WORLD
+  FUS -- result on stop --> DB
+  KW -- on stop --> DB
 ```
 
 All channels use the same **seven-class taxonomy from MELD** (neutral, joy,
@@ -170,6 +174,8 @@ weights moved from 0.5 / 0.3 / 0.2 to **0.8 / 0.15 / 0.05**.
 
 ```powershell
 .\run.ps1            # starts the sidecar, warms the models, opens the app
+```
+```powershell
 .\Demo.ps1 --Clear   # for a new demo with test data 
 ```
 
